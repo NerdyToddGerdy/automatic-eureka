@@ -1,0 +1,964 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Vault - Character Image Manager</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Open+Sans:wght@300;400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <h1 class="logo">Image Vault</h1>
+            <div class="header-actions">
+                <button id="uploadBtn" class="btn btn-primary">
+                    <span>📤</span> Upload Images
+                </button>
+                <button id="driveBtn" class="btn btn-secondary">
+                    <span>☁️</span> Google Drive
+                </button>
+                <button id="scanBtn" class="btn btn-secondary">
+                    <span>🔄</span> Rescan
+                </button>
+                <button id="statsBtn" class="btn btn-secondary">
+                    <span>📊</span> Stats
+                </button>
+            </div>
+        </header>
+
+        <!-- Mode Indicator (Electron vs Browser) -->
+        <div id="modeIndicator" class="mode-indicator" style="display: none;"></div>
+
+        <!-- Media Type Tabs -->
+        <div class="media-tabs">
+            <button class="media-tab active" data-tab="images">
+                <span class="media-tab-icon">🖼️</span>
+                <span class="media-tab-label">Images</span>
+                <span class="media-tab-count" id="imageTabCount">0</span>
+            </button>
+            <button class="media-tab" data-tab="audio">
+                <span class="media-tab-icon">🎵</span>
+                <span class="media-tab-label">Audio</span>
+                <span class="media-tab-count" id="audioTabCount">0</span>
+            </button>
+        </div>
+
+        <!-- Filters and Search -->
+        <section class="filters">
+            <div class="search-box">
+                <input type="text" id="searchInput" placeholder="Search tokens..." />
+            </div>
+
+            <div class="filter-controls">
+                <select id="imageTypeFilter" class="filter-select">
+                    <option value="">All Types</option>
+                    <option value="Token">Tokens</option>
+                    <option value="Map">Maps</option>
+                    <option value="Handout">Handouts</option>
+                    <option value="Portrait">Portraits</option>
+                    <option value="Scene">Scenes</option>
+                    <option value="Item">Items</option>
+                </select>
+
+                <div id="speciesFilterContainer" class="filter-container" style="display:none;"></div>
+
+                <div id="classFilterContainer" class="filter-container" style="display:none;"></div>
+
+                <div id="themeFilterContainer" class="filter-container" style="display:none;"></div>
+
+                <div id="sourceFilterContainer" class="filter-container"></div>
+
+                <div id="campaignFilterContainer" class="filter-container"></div>
+
+                <select id="sortBy" class="filter-select">
+                    <option value="filename">Sort by Name</option>
+                    <option value="date_added">Sort by Date Added</option>
+                    <option value="image_type">Sort by Type</option>
+                    <option value="species">Sort by Species</option>
+                    <option value="class">Sort by Class</option>
+                </select>
+
+                <button id="clearFiltersBtn" class="btn btn-text">Clear Filters</button>
+            </div>
+        </section>
+
+        <!-- Bulk Actions Bar (hidden by default) -->
+        <div id="bulkActionsBar" class="bulk-actions-bar" style="display: none;">
+            <div class="bulk-actions-info">
+                <span id="selectedCount">0</span> images selected
+            </div>
+            <div class="bulk-actions-buttons">
+                <button id="bulkEditBtn" class="btn btn-small">Edit Tags</button>
+                <button id="bulkDeleteBtn" class="btn btn-small btn-danger">Delete</button>
+                <button id="deselectAllBtn" class="btn btn-small btn-text">Deselect All</button>
+            </div>
+        </div>
+
+        <!-- View Toggle -->
+        <div class="view-toggle">
+            <button id="gridViewBtn" class="view-btn active">Grid</button>
+            <button id="listViewBtn" class="view-btn">List</button>
+            <span class="token-count" id="tokenCount">0 tokens</span>
+        </div>
+
+        <!-- Token Gallery -->
+        <main id="tokenGallery" class="token-gallery grid-view">
+            <!-- Tokens will be inserted here by JavaScript -->
+        </main>
+
+        <!-- Audio Filters (hidden by default) -->
+        <section id="audioFilters" class="filters" style="display: none;">
+            <div class="search-box">
+                <input type="text" id="audioSearchInput" placeholder="Search audio files..." />
+            </div>
+
+            <div class="filter-controls">
+                <select id="audioTypeFilter" class="filter-select">
+                    <option value="">All Types</option>
+                    <option value="Music">Music</option>
+                    <option value="SoundEffect">Sound Effects</option>
+                    <option value="Ambience">Ambience</option>
+                    <option value="Dialogue">Dialogue</option>
+                </select>
+
+                <div id="genreFilterContainer" class="filter-container"></div>
+                <div id="moodFilterContainer" class="filter-container"></div>
+                <div id="audioSourceFilterContainer" class="filter-container"></div>
+                <div id="audioCampaignFilterContainer" class="filter-container"></div>
+
+                <select id="audioSortBy" class="filter-select">
+                    <option value="filename">Sort by Name</option>
+                    <option value="date_added">Sort by Date Added</option>
+                    <option value="audio_type">Sort by Type</option>
+                    <option value="duration_seconds">Sort by Duration</option>
+                </select>
+
+                <button id="clearAudioFiltersBtn" class="btn btn-text">Clear Filters</button>
+            </div>
+        </section>
+
+        <!-- Audio Gallery (hidden by default) -->
+        <main id="audioGallery" class="audio-gallery" style="display: none;">
+            <!-- Audio files will be inserted here by JavaScript -->
+        </main>
+
+        <!-- Loading Indicator -->
+        <div id="loadingIndicator" class="loading" style="display: none;">
+            <div class="spinner"></div>
+            <p>Loading tokens...</p>
+        </div>
+
+        <!-- Empty State -->
+        <div id="emptyState" class="empty-state" style="display: none;">
+            <h2>No Tokens Found</h2>
+            <p>Upload some PNG tokens to get started!</p>
+        </div>
+    </div>
+
+    <!-- Token Detail Modal -->
+    <div id="tokenModal" class="modal" style="display: none;">
+        <div class="modal-overlay"></div>
+        <div class="modal-content">
+            <button class="modal-close">&times;</button>
+
+            <div class="modal-body">
+                <div class="modal-image">
+                    <img id="modalImage" src="" alt="Token" />
+
+                    <div class="token-metadata">
+                        <p><strong>Filename:</strong> <span id="modalFilename"></span></p>
+                        <p><strong>Date Added:</strong> <span id="modalDateAdded"></span></p>
+                        <p><strong>File Location:</strong>
+                            <div class="file-path-container">
+                                <a id="modalFilePath" class="file-path-link" href="#" title="Click to copy path">
+                                    <span id="modalFilePathText"></span>
+                                </a>
+                                <button id="showInFinderBtn" class="show-in-finder-btn" title="Show in Finder" style="display: none;">
+                                    📂 Show in Finder
+                                </button>
+                            </div>
+                        </p>
+                    </div>
+                </div>
+
+                <div class="modal-details">
+                    <h2 id="modalTitle">Token Details</h2>
+
+                    <form id="tokenEditForm" class="token-form">
+                        <input type="hidden" id="editTokenId" />
+
+                        <div class="form-group">
+                            <label for="editName">Display Name</label>
+                            <input type="text" id="editName" class="form-input" />
+                        </div>
+
+                        <div class="form-group">
+                            <label for="editImageType">Image Type</label>
+                            <select id="editImageType" class="form-input">
+                                <option value="Token">Token</option>
+                                <option value="Map">Map</option>
+                                <option value="Handout">Handout</option>
+                                <option value="Portrait">Portrait</option>
+                                <option value="Scene">Scene</option>
+                                <option value="Item">Item</option>
+                            </select>
+                        </div>
+
+                        <div id="dynamicTagFields">
+                            <!-- Dynamic tag fields will be inserted here -->
+                        </div>
+
+                        <div class="form-group">
+                            <label for="editNotes">Notes</label>
+                            <textarea id="editNotes" class="form-input" rows="3"></textarea>
+                        </div>
+
+                        <div class="form-actions">
+                            <button type="submit" class="btn btn-primary">Save Changes</button>
+                            <button type="button" id="deleteTokenBtn" class="btn btn-danger">Delete Token</button>
+                            <button type="button" class="btn btn-secondary modal-close-btn">Cancel</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Image Lightbox for Full-Size Viewing -->
+    <div id="imageLightbox" class="lightbox" style="display: none;">
+        <div class="lightbox-overlay"></div>
+        <div class="lightbox-content">
+            <button class="lightbox-close">&times;</button>
+            <img id="lightboxImage" src="" alt="Full Size" />
+        </div>
+    </div>
+
+    <!-- Bulk Edit Modal -->
+    <div id="bulkEditModal" class="modal" style="display: none;">
+        <div class="modal-overlay"></div>
+        <div class="modal-content modal-small">
+            <button class="modal-close">&times;</button>
+
+            <div class="modal-body">
+                <h2>Edit Selected Tokens</h2>
+                <p class="modal-subtitle">These changes will be applied to all selected tokens</p>
+
+                <form id="bulkEditForm" class="token-form">
+                    <div class="form-group">
+                        <label for="bulkSpecies">Species</label>
+                        <input type="text" id="bulkSpecies" class="form-input" list="speciesList" placeholder="Leave empty to skip" />
+                    </div>
+
+                    <div class="form-group">
+                        <label for="bulkClass">Class</label>
+                        <input type="text" id="bulkClass" class="form-input" list="classList" placeholder="Leave empty to skip" />
+                    </div>
+
+                    <div class="form-group">
+                        <label for="bulkSource">Source</label>
+                        <input type="text" id="bulkSource" class="form-input" list="sourceList" placeholder="Leave empty to skip" />
+                    </div>
+
+                    <div class="form-group">
+                        <label for="bulkCampaign">Campaign</label>
+                        <input type="text" id="bulkCampaign" class="form-input" list="campaignList" placeholder="Leave empty to skip" />
+                    </div>
+
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">Apply to Selected</button>
+                        <button type="button" class="btn btn-secondary modal-close-btn">Cancel</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Stats Modal -->
+    <div id="statsModal" class="modal" style="display: none;">
+        <div class="modal-overlay"></div>
+        <div class="modal-content modal-small">
+            <button class="modal-close">&times;</button>
+
+            <div class="modal-body">
+                <h2>Image Vault Statistics</h2>
+                <div id="statsContent" class="stats-content">
+                    <!-- Stats will be inserted here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Duplicate Confirmation Modal -->
+    <div id="duplicateModal" class="modal" style="display: none;">
+        <div class="modal-overlay"></div>
+        <div class="modal-content modal-wide">
+            <button class="modal-close">&times;</button>
+
+            <div class="modal-body">
+                <h2>Duplicate Files Detected</h2>
+                <p class="modal-subtitle">The following files already exist in your vault. Choose how to handle each one:</p>
+
+                <div id="duplicateList" class="duplicate-list">
+                    <!-- Duplicate file entries will be inserted here -->
+                </div>
+
+                <div class="form-actions">
+                    <button id="confirmDuplicatesBtn" class="btn btn-primary">Continue</button>
+                    <button type="button" class="btn btn-secondary modal-close-btn">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Files Modal -->
+    <div id="addFilesModal" class="modal" style="display: none;">
+        <div class="modal-overlay"></div>
+        <div class="modal-content modal-small">
+            <button class="modal-close">&times;</button>
+
+            <div class="modal-body">
+                <h2>Upload Images</h2>
+                <p class="modal-subtitle">Add tokens, maps, portraits, and other images to your vault</p>
+
+                <form id="imageUploadForm" class="token-form">
+                    <div class="form-group">
+                        <label for="uploadImageType">Image Type</label>
+                        <select id="uploadImageType" class="form-input" required>
+                            <option value="Token">Token</option>
+                            <option value="Map">Map</option>
+                            <option value="Handout">Handout</option>
+                            <option value="Portrait">Portrait</option>
+                            <option value="Scene">Scene</option>
+                            <option value="Item">Item</option>
+                        </select>
+                    </div>
+
+                    <div id="uploadImageDynamicTagFields">
+                        <!-- Dynamic tag fields based on image type -->
+                    </div>
+
+                    <div class="audio-drop-zone" id="imageDropZone">
+                        <div class="audio-drop-icon">🖼️</div>
+                        <p>Drop image files here or click to browse</p>
+                        <p class="audio-drop-formats">Supported: PNG, JPG, JPEG</p>
+                    </div>
+
+                    <div id="imageFileList" class="audio-file-list" style="display: none;">
+                        <!-- Selected files will be listed here -->
+                    </div>
+
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary" id="uploadImageSubmitBtn" disabled>Upload</button>
+                        <button type="button" class="btn btn-secondary modal-close-btn">Cancel</button>
+                    </div>
+                </form>
+
+                <div class="import-folder-link">
+                    <a href="#" id="importFolderLink">Or import an entire folder with subfolders...</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Folder Import Modal -->
+    <div id="folderImportModal" class="modal" style="display: none;">
+        <div class="modal-overlay"></div>
+        <div class="modal-content modal-small">
+            <button class="modal-close">&times;</button>
+
+            <div class="modal-body">
+                <h2>Import Folder</h2>
+                <p class="modal-subtitle">Enter folder path or drag and drop</p>
+
+                <!-- Drag and Drop Zone for Folder -->
+                <div class="folder-drop-zone" id="folderDropZone">
+                    <div class="folder-drop-icon">📁</div>
+                    <p class="folder-drop-text">Drop a folder here</p>
+                    <p class="folder-drop-subtext">or</p>
+                </div>
+
+                <form id="folderImportForm" class="token-form">
+                    <div class="form-group">
+                        <label for="folderPathInput">Folder Path</label>
+                        <input type="text" id="folderPathInput" class="form-input" placeholder="/path/to/your/tokens/folder" required />
+                        <small style="color: var(--text-secondary); display: block; margin-top: 8px;">
+                            Example: /Users/username/Pictures/Tokens
+                        </small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="recursiveCheckbox" checked />
+                            <span style="margin-left: 8px;">Include subfolders</span>
+                        </label>
+                    </div>
+
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">Scan Folder</button>
+                        <button type="button" class="btn btn-secondary modal-close-btn">Cancel</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Image Type Selection Modal -->
+    <div id="imageTypeModal" class="modal" style="display: none;">
+        <div class="modal-overlay"></div>
+        <div class="modal-content modal-small">
+            <button class="modal-close">&times;</button>
+
+            <div class="modal-body">
+                <h2>Select Image Type</h2>
+                <p class="modal-subtitle">What type of images are you uploading?</p>
+
+                <form id="imageTypeForm" class="token-form">
+                    <div class="image-type-options">
+                        <label class="image-type-option" data-type="Token">
+                            <input type="radio" name="imageType" value="Token" required />
+                            <div class="image-type-option-content">
+                                <span class="image-type-icon">🎭</span>
+                                <div>
+                                    <h3>Token</h3>
+                                    <p>Character tokens for battles and encounters</p>
+                                </div>
+                            </div>
+                        </label>
+
+                        <label class="image-type-option" data-type="Map">
+                            <input type="radio" name="imageType" value="Map" required />
+                            <div class="image-type-option-content">
+                                <span class="image-type-icon">🗺️</span>
+                                <div>
+                                    <h3>Map</h3>
+                                    <p>Battle maps and location layouts</p>
+                                </div>
+                            </div>
+                        </label>
+
+                        <label class="image-type-option" data-type="Handout">
+                            <input type="radio" name="imageType" value="Handout" required />
+                            <div class="image-type-option-content">
+                                <span class="image-type-icon">📄</span>
+                                <div>
+                                    <h3>Handout</h3>
+                                    <p>Items, notes, and props for players</p>
+                                </div>
+                            </div>
+                        </label>
+
+                        <label class="image-type-option" data-type="Portrait">
+                            <input type="radio" name="imageType" value="Portrait" required />
+                            <div class="image-type-option-content">
+                                <span class="image-type-icon">🖼️</span>
+                                <div>
+                                    <h3>Portrait</h3>
+                                    <p>Character portraits and NPC art</p>
+                                </div>
+                            </div>
+                        </label>
+
+                        <label class="image-type-option" data-type="Scene">
+                            <input type="radio" name="imageType" value="Scene" required />
+                            <div class="image-type-option-content">
+                                <span class="image-type-icon">🌄</span>
+                                <div>
+                                    <h3>Scene</h3>
+                                    <p>Atmospheric scene art and backgrounds</p>
+                                </div>
+                            </div>
+                        </label>
+
+                        <label class="image-type-option" data-type="Item">
+                            <input type="radio" name="imageType" value="Item" required />
+                            <div class="image-type-option-content">
+                                <span class="image-type-icon">💎</span>
+                                <div>
+                                    <h3>Item</h3>
+                                    <p>Loot, artifacts, and magical objects</p>
+                                </div>
+                            </div>
+                        </label>
+                    </div>
+
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">Continue</button>
+                        <button type="button" class="btn btn-secondary modal-close-btn">Cancel</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Batch Tag Setting Modal -->
+    <div id="batchTagModal" class="modal" style="display: none;">
+        <div class="modal-overlay"></div>
+        <div class="modal-content modal-small">
+            <button class="modal-close">&times;</button>
+
+            <div class="modal-body">
+                <h2>Set Tags for Batch Upload</h2>
+                <p class="modal-subtitle">These tags will be applied to all <span id="batchFileCount">0</span> images (optional)</p>
+
+                <form id="batchTagForm" class="token-form">
+                    <div id="batchDynamicTagFields">
+                        <!-- Dynamic tag fields inserted here based on image type -->
+                    </div>
+
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">Continue with Tags</button>
+                        <button type="button" class="btn btn-secondary" id="skipTagsBtn">Skip Tags</button>
+                        <button type="button" class="btn btn-text modal-close-btn">Cancel Upload</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Subfolder Selection Modal -->
+    <div id="subfolderSelectionModal" class="modal" style="display: none;">
+        <div class="modal-overlay"></div>
+        <div class="modal-content modal-wide">
+            <button class="modal-close">&times;</button>
+
+            <div class="modal-body">
+                <h2>Select Subfolders to Import</h2>
+                <p class="modal-subtitle">
+                    Found <span id="subfolderTotalCount">0</span> subfolders with
+                    <span id="subfolderTotalFiles">0</span> images
+                </p>
+
+                <div class="subfolder-selection-controls">
+                    <button id="selectAllSubfoldersBtn" class="btn btn-small">Select All</button>
+                    <button id="deselectAllSubfoldersBtn" class="btn btn-small">Deselect All</button>
+                </div>
+
+                <div id="subfolderList" class="subfolder-list">
+                    <!-- Subfolder items will be inserted here -->
+                </div>
+
+                <div class="form-actions">
+                    <button id="continueSubfolderSelectionBtn" class="btn btn-primary">
+                        Continue with Selected (<span id="selectedSubfolderCount">0</span>)
+                    </button>
+                    <button type="button" class="btn btn-secondary modal-close-btn">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Subfolder Tagging Wizard Modal -->
+    <div id="subfolderWizardModal" class="modal" style="display: none;">
+        <div class="modal-overlay"></div>
+        <div class="modal-content modal-large">
+            <button class="modal-close">&times;</button>
+
+            <div class="modal-body">
+                <!-- Progress Indicator -->
+                <div class="wizard-progress">
+                    <div class="wizard-progress-bar">
+                        <div id="wizardProgressFill" class="wizard-progress-fill" style="width: 0%"></div>
+                    </div>
+                    <p class="wizard-progress-text">
+                        Step <span id="wizardCurrentStep">1</span> of <span id="wizardTotalSteps">1</span>
+                    </p>
+                </div>
+
+                <!-- Subfolder Info -->
+                <div class="wizard-subfolder-info">
+                    <h2 id="wizardSubfolderName">Subfolder Name</h2>
+                    <p class="wizard-subfolder-path" id="wizardSubfolderPath">/path/to/subfolder</p>
+                    <p class="wizard-file-count">
+                        <span id="wizardFileCount">0</span> files in this subfolder
+                    </p>
+                </div>
+
+                <!-- Image Preview Grid -->
+                <div class="wizard-preview-grid" id="wizardPreviewGrid">
+                    <!-- Preview thumbnails will be inserted here -->
+                </div>
+
+                <!-- Tagging Form -->
+                <form id="wizardTagForm" class="token-form wizard-form">
+                    <div class="form-group">
+                        <label for="wizardImageType">Image Type</label>
+                        <select id="wizardImageType" class="form-input" required>
+                            <option value="Token">Token</option>
+                            <option value="Map">Map</option>
+                            <option value="Handout">Handout</option>
+                            <option value="Portrait">Portrait</option>
+                            <option value="Scene">Scene</option>
+                            <option value="Item">Item</option>
+                        </select>
+                    </div>
+
+                    <div id="wizardDynamicTagFields">
+                        <!-- Dynamic tag fields based on image type -->
+                    </div>
+
+                    <!-- Duplicate Handling (shown only if duplicates exist) -->
+                    <div id="wizardDuplicateWarning" class="wizard-duplicate-warning" style="display: none;">
+                        <div class="warning-icon">⚠️</div>
+                        <div class="warning-content">
+                            <h4>Duplicate Files Detected</h4>
+                            <p>Some files already exist in your vault. Review duplicate handling on final step.</p>
+                        </div>
+                    </div>
+
+                    <!-- Navigation -->
+                    <div class="wizard-actions">
+                        <button type="button" id="wizardPrevBtn" class="btn btn-secondary">
+                            ← Previous
+                        </button>
+                        <button type="button" id="wizardSkipBtn" class="btn btn-text">
+                            Skip This Subfolder
+                        </button>
+                        <button type="submit" id="wizardNextBtn" class="btn btn-primary">
+                            Next →
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Final Review Modal -->
+    <div id="wizardReviewModal" class="modal" style="display: none;">
+        <div class="modal-overlay"></div>
+        <div class="modal-content modal-wide">
+            <button class="modal-close">&times;</button>
+
+            <div class="modal-body">
+                <h2>Review and Confirm Import</h2>
+                <p class="modal-subtitle">Review your selections before importing</p>
+
+                <div id="wizardReviewList" class="wizard-review-list">
+                    <!-- Review items will be inserted here -->
+                </div>
+
+                <!-- Duplicate Resolution Section -->
+                <div id="wizardDuplicateSection" style="display: none;">
+                    <h3>Resolve Duplicates</h3>
+                    <div id="wizardDuplicateList" class="duplicate-list">
+                        <!-- Duplicate items will be inserted here -->
+                    </div>
+                </div>
+
+                <div class="wizard-review-summary">
+                    <p>
+                        <strong>Total:</strong> <span id="reviewTotalFiles">0</span> files from
+                        <span id="reviewTotalSubfolders">0</span> subfolders
+                    </p>
+                </div>
+
+                <div class="form-actions">
+                    <button id="wizardImportBtn" class="btn btn-primary">Import Files</button>
+                    <button id="wizardBackToEditBtn" class="btn btn-secondary">Back to Edit</button>
+                    <button type="button" class="btn btn-text modal-close-btn">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Repair Broken Reference Modal -->
+    <div id="repairModal" class="modal" style="display: none;">
+        <div class="modal-overlay"></div>
+        <div class="modal-content modal-small">
+            <button class="modal-close">&times;</button>
+
+            <div class="modal-body">
+                <h2>File Not Found</h2>
+                <p class="modal-subtitle">The file for this token could not be found at its original location</p>
+
+                <div class="repair-info">
+                    <div class="repair-info-item">
+                        <strong>Token Name:</strong> <span id="repairTokenName"></span>
+                    </div>
+                    <div class="repair-info-item">
+                        <strong>Original Path:</strong>
+                        <code id="repairOriginalPath"></code>
+                    </div>
+                    <div class="repair-info-item">
+                        <strong>Last Verified:</strong> <span id="repairLastVerified"></span>
+                    </div>
+                </div>
+
+                <form id="repairForm" class="token-form" style="display: none;">
+                    <div class="form-group">
+                        <label for="repairNewPath">New File Path</label>
+                        <input type="text" id="repairNewPath" class="form-input" placeholder="/path/to/relocated/file.png" required />
+                        <small style="color: var(--text-secondary); display: block; margin-top: 8px;">
+                            Enter the new location of this file
+                        </small>
+                    </div>
+
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">Update Path</button>
+                        <button type="button" class="btn btn-secondary" id="cancelRepairBtn">Cancel</button>
+                    </div>
+                </form>
+
+                <div id="repairActions" class="form-actions">
+                    <button id="locateFileBtn" class="btn btn-primary">Locate File</button>
+                    <button id="removeEntryBtn" class="btn btn-danger">Remove from Vault</button>
+                    <button type="button" class="btn btn-secondary modal-close-btn">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Audio Detail Modal -->
+    <div id="audioModal" class="modal" style="display: none;">
+        <div class="modal-overlay"></div>
+        <div class="modal-content">
+            <button class="modal-close">&times;</button>
+
+            <div class="modal-body">
+                <div class="audio-player-section">
+                    <div class="audio-player-container">
+                        <div class="audio-type-icon" id="audioModalTypeIcon">🎵</div>
+                        <div class="audio-player-info">
+                            <h3 id="audioModalFilename"></h3>
+                            <p class="audio-duration" id="audioModalDuration">0:00</p>
+                        </div>
+                    </div>
+                    <audio id="audioPlayer" controls class="audio-player">
+                        Your browser does not support the audio element.
+                    </audio>
+                    <div class="audio-metadata">
+                        <p><strong>File:</strong> <span id="audioModalFile"></span></p>
+                        <p><strong>Format:</strong> <span id="audioModalFormat"></span></p>
+                        <p><strong>Size:</strong> <span id="audioModalSize"></span></p>
+                        <p><strong>Date Added:</strong> <span id="audioModalDateAdded"></span></p>
+                        <p><strong>File Location:</strong>
+                            <div class="file-path-container">
+                                <a id="audioModalFilePath" class="file-path-link" href="#" title="Click to copy path">
+                                    <span id="audioModalFilePathText"></span>
+                                </a>
+                                <button id="audioShowInFinderBtn" class="show-in-finder-btn" title="Show in Finder" style="display: none;">
+                                    📂 Show in Finder
+                                </button>
+                            </div>
+                        </p>
+                    </div>
+                </div>
+
+                <div class="modal-details">
+                    <h2>Audio Details</h2>
+
+                    <form id="audioEditForm" class="token-form">
+                        <input type="hidden" id="editAudioId" />
+
+                        <div class="form-group">
+                            <label for="editAudioName">Display Name</label>
+                            <input type="text" id="editAudioName" class="form-input" />
+                        </div>
+
+                        <div class="form-group">
+                            <label for="editAudioType">Audio Type</label>
+                            <select id="editAudioType" class="form-input">
+                                <option value="Music">Music</option>
+                                <option value="SoundEffect">Sound Effect</option>
+                                <option value="Ambience">Ambience</option>
+                                <option value="Dialogue">Dialogue</option>
+                            </select>
+                        </div>
+
+                        <div id="audioDynamicTagFields">
+                            <!-- Dynamic tag fields will be inserted here -->
+                        </div>
+
+                        <div class="form-group">
+                            <label for="editAudioNotes">Notes</label>
+                            <textarea id="editAudioNotes" class="form-input" rows="3"></textarea>
+                        </div>
+
+                        <div class="form-actions">
+                            <button type="submit" class="btn btn-primary">Save Changes</button>
+                            <button type="button" id="deleteAudioBtn" class="btn btn-danger">Delete Audio</button>
+                            <button type="button" class="btn btn-secondary modal-close-btn">Cancel</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Audio Upload Modal -->
+    <div id="audioUploadModal" class="modal" style="display: none;">
+        <div class="modal-overlay"></div>
+        <div class="modal-content modal-small">
+            <button class="modal-close">&times;</button>
+
+            <div class="modal-body">
+                <h2>Upload Audio Files</h2>
+                <p class="modal-subtitle">Add music, sound effects, or ambient audio to your vault</p>
+
+                <form id="audioUploadForm" class="token-form">
+                    <div class="form-group">
+                        <label for="uploadAudioType">Audio Type</label>
+                        <select id="uploadAudioType" class="form-input" required>
+                            <option value="Music">Music</option>
+                            <option value="SoundEffect">Sound Effect</option>
+                            <option value="Ambience">Ambience</option>
+                            <option value="Dialogue">Dialogue</option>
+                        </select>
+                    </div>
+
+                    <div id="audioUploadDynamicTagFields">
+                        <!-- Dynamic tag fields based on audio type -->
+                    </div>
+
+                    <div class="audio-drop-zone" id="audioDropZone">
+                        <div class="audio-drop-icon">🎵</div>
+                        <p>Drop audio files here or click to browse</p>
+                        <p class="audio-drop-formats">Supported: MP3, WAV, OGG, M4A, FLAC</p>
+                    </div>
+
+                    <div id="audioFileList" class="audio-file-list" style="display: none;">
+                        <!-- Selected files will be listed here -->
+                    </div>
+
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary" id="uploadAudioSubmitBtn" disabled>Upload</button>
+                        <button type="button" class="btn btn-secondary modal-close-btn">Cancel</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Audio Type Selection Modal -->
+    <div id="audioTypeSelectionModal" class="modal" style="display: none;">
+        <div class="modal-overlay"></div>
+        <div class="modal-content modal-small">
+            <button class="modal-close">&times;</button>
+
+            <div class="modal-body">
+                <h2>Select Audio Type</h2>
+                <p class="modal-subtitle">What type of audio are you uploading?</p>
+
+                <form id="audioTypeSelectionForm" class="token-form">
+                    <div class="audio-type-options">
+                        <label class="audio-type-option" data-type="Music">
+                            <input type="radio" name="audioType" value="Music" required />
+                            <div class="audio-type-option-content">
+                                <span class="audio-type-icon">🎶</span>
+                                <div>
+                                    <h3>Music</h3>
+                                    <p>Background music and soundtracks</p>
+                                </div>
+                            </div>
+                        </label>
+
+                        <label class="audio-type-option" data-type="SoundEffect">
+                            <input type="radio" name="audioType" value="SoundEffect" required />
+                            <div class="audio-type-option-content">
+                                <span class="audio-type-icon">💥</span>
+                                <div>
+                                    <h3>Sound Effect</h3>
+                                    <p>Combat sounds, spells, impacts</p>
+                                </div>
+                            </div>
+                        </label>
+
+                        <label class="audio-type-option" data-type="Ambience">
+                            <input type="radio" name="audioType" value="Ambience" required />
+                            <div class="audio-type-option-content">
+                                <span class="audio-type-icon">🌲</span>
+                                <div>
+                                    <h3>Ambience</h3>
+                                    <p>Environmental and atmospheric sounds</p>
+                                </div>
+                            </div>
+                        </label>
+
+                        <label class="audio-type-option" data-type="Dialogue">
+                            <input type="radio" name="audioType" value="Dialogue" required />
+                            <div class="audio-type-option-content">
+                                <span class="audio-type-icon">💬</span>
+                                <div>
+                                    <h3>Dialogue</h3>
+                                    <p>Character voices and NPC speech</p>
+                                </div>
+                            </div>
+                        </label>
+                    </div>
+
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">Continue</button>
+                        <button type="button" class="btn btn-secondary modal-close-btn">Cancel</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Google Drive Settings Modal -->
+    <div id="driveModal" class="modal" style="display: none;">
+        <div class="modal-overlay"></div>
+        <div class="modal-content modal-wide">
+            <button class="modal-close">&times;</button>
+
+            <div class="modal-body">
+                <h2>Google Drive Sync</h2>
+
+                <!-- Drive Status -->
+                <div id="driveStatus" class="drive-status">
+                    <div class="status-loading">Checking connection...</div>
+                </div>
+
+                <!-- Monitored Folders Section -->
+                <div id="monitoredFoldersSection" style="display: none;">
+                    <h3>Monitored Folders</h3>
+                    <p class="modal-subtitle">These folders are automatically synced to your vault</p>
+
+                    <div id="monitoredFoldersList" class="monitored-folders-list">
+                        <!-- Monitored folders will be inserted here -->
+                    </div>
+
+                    <button id="addDriveFolderBtn" class="btn btn-primary" style="margin-top: 16px;">
+                        <span>➕</span> Add Folder to Sync
+                    </button>
+                </div>
+
+                <!-- Drive Folder Browser (hidden by default) -->
+                <div id="driveBrowserSection" style="display: none;">
+                    <h3>Browse Google Drive</h3>
+                    <p class="modal-subtitle">Select a folder to sync</p>
+
+                    <div id="driveBreadcrumb" class="drive-breadcrumb">
+                        <button class="breadcrumb-item" data-folder-id="root">My Drive</button>
+                    </div>
+
+                    <div id="driveFoldersList" class="drive-folders-list">
+                        <!-- Drive folders will be inserted here -->
+                    </div>
+
+                    <div class="form-actions">
+                        <button id="cancelBrowseBtn" class="btn btn-secondary">Back to Monitored Folders</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- File Upload (hidden) -->
+    <input type="file" id="fileInput" accept=".png,.jpg,.jpeg,image/png,image/jpeg" multiple style="display: none;" />
+    <input type="file" id="folderInput" webkitdirectory directory multiple style="display: none;" />
+    <input type="file" id="repairFileInput" accept=".png,.jpg,.jpeg,image/png,image/jpeg" style="display: none;" />
+    <input type="file" id="audioFileInput" accept=".mp3,.wav,.ogg,.m4a,.flac,audio/*" multiple style="display: none;" />
+    <input type="file" id="imageFileInputSimple" accept=".png,.jpg,.jpeg,image/png,image/jpeg" multiple style="display: none;" />
+
+    <!-- Scroll to Top Button -->
+    <button id="scrollToTopBtn" class="scroll-to-top" title="Back to top">
+        ↑
+    </button>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

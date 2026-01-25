@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sqlite3:*)",
+      "Bash(cat:*)",
+      "Bash(/Users/toddgerdy/Library/Python/3.12/bin/pytest:*)",
+      "Bash(tree:*)",
+      "Bash(ls:*)",
+      "Bash(pip install:*)",
+      "Bash(pytest:*)",
+      "Bash(python3:*)",
+      "Bash(curl:*)",
+      "Bash(node --check:*)",
+      "Bash(echo:*)",
+      "Bash(git init:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

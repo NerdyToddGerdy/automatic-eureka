@@ -1,0 +1,68 @@
+{
+  "defaultModel": "opus-4.5",
+  "thinkingMode": "auto",
+  "autoAccept": {
+    "enabled": true,
+    "riskLevel": "low"
+  },
+  "customCommands": {
+    "enabled": true,
+    "directory": ".claude/commands"
+  },
+  "agents": {
+    "enabled": true,
+    "directory": ".claude/agents"
+  },
+  "contextFiles": [
+    "CLAUDE.md",
+    "CLAUDE-shared.md"
+  ],
+  "ignorePatterns": [
+    "node_modules/**",
+    ".venv/**",
+    "__pycache__/**",
+    "*.pyc",
+    "dist/**",
+    "build/**",
+    "htmlcov/**",
+    ".pytest_cache/**",
+    ".git/**",
+    "tokens/**",
+    "thumbnails/**",
+    "tokens.db"
+  ],
+  "testing": {
+    "framework": "pytest",
+    "e2eFramework": "selenium",
+    "coverage": true,
+    "runBeforeCommit": false
+  },
+  "git": {
+    "autoStage": false,
+    "conventionalCommits": true,
+    "requireCoAuthor": true,
+    "coAuthorName": "Claude Sonnet 4.5",
+    "coAuthorEmail": "noreply@anthropic.com"
+  },
+  "linting": {
+    "python": {
+      "enabled": false,
+      "tool": "flake8"
+    },
+    "javascript": {
+      "enabled": false,
+      "tool": "eslint"
+    }
+  },
+  "documentation": {
+    "autoUpdate": true,
+    "changelogEnabled": true,
+    "changelogPath": "CHANGELOG.md"
+  },
+  "projectSpecific": {
+    "metadataContract": "png-first",
+    "dualModeSupport": true,
+    "imageTypes": ["Token", "Map", "Handout", "Portrait", "Scene", "Item"],
+    "requireMetadataSync": true
+  }
+}

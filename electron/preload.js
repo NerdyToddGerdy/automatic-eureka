@@ -1,0 +1,30 @@
+const { contextBridge, ipcRenderer } = require('electron');
+const { webUtils } = require('electron');
+
+// Expose secure API to renderer process
+contextBridge.exposeInMainWorld('electronAPI', {
+  /**
+   * Get absolute file path from File object
+   * Only works in Electron with webUtils
+   */
+  getFileAbsolutePath: (file) => {
+    try {
+      return webUtils.getPathForFile(file);
+    } catch (error) {
+      console.error('Error getting file path:', error);
+      return null;
+    }
+  },
+
+  /**
+   * Show file in Finder (macOS) or Explorer (Windows)
+   * @param {string} filepath - Absolute path to the file
+   * @returns {Promise<{success: boolean, error?: string}>}
+   */
+  showItemInFolder: (filepath) => ipcRenderer.invoke('show-item-in-folder', filepath),
+
+  /**
+   * Flag indicating we're running in Electron
+   */
+  isElectron: true
+});

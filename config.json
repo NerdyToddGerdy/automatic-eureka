@@ -1,0 +1,7 @@
+{
+  "token_folder": "./tokens",
+  "thumbnail_size": [150, 150],
+  "watch_folder": true,
+  "port": 5000,
+  "host": "127.0.0.1"
+}
