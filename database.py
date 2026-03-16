@@ -50,7 +50,6 @@ class TokenDatabase:
                     notes TEXT,
                     date_added TEXT,
                     file_modified TEXT,
-                    thumbnail_path TEXT,
                     scale TEXT,
                     theme TEXT,
                     type TEXT,
@@ -173,12 +172,12 @@ class TokenDatabase:
                 cursor.execute('''
                     INSERT INTO tokens (
                         filepath, filename, name, image_type, species, class, source,
-                        campaign, notes, date_added, file_modified, thumbnail_path,
+                        campaign, notes, date_added, file_modified,
                         scale, theme, type, subject, style, location, mood,
                         rarity, category, attunement,
                         drive_file_id, drive_folder_id, drive_web_view_link,
                         drive_thumbnail_link, last_synced_from_drive
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     token_data.get('filepath'),
                     token_data.get('filename'),
@@ -191,7 +190,6 @@ class TokenDatabase:
                     token_data.get('Notes'),
                     token_data.get('DateAdded'),
                     token_data.get('file_modified'),
-                    token_data.get('thumbnail_path'),
                     token_data.get('Scale'),
                     token_data.get('Theme'),
                     token_data.get('Type'),
@@ -236,7 +234,7 @@ class TokenDatabase:
                 cursor.execute('''
                     UPDATE tokens SET
                         name = ?, image_type = ?, species = ?, class = ?, source = ?,
-                        campaign = ?, notes = ?, file_modified = ?, thumbnail_path = ?,
+                        campaign = ?, notes = ?, file_modified = ?,
                         scale = ?, theme = ?, type = ?, subject = ?, style = ?, location = ?, mood = ?,
                         rarity = ?, category = ?, attunement = ?,
                         drive_file_id = ?, drive_folder_id = ?, drive_web_view_link = ?,
@@ -251,7 +249,6 @@ class TokenDatabase:
                     token_data.get('Campaign'),
                     token_data.get('Notes'),
                     token_data.get('file_modified'),
-                    token_data.get('thumbnail_path'),
                     token_data.get('Scale'),
                     token_data.get('Theme'),
                     token_data.get('Type'),
@@ -294,7 +291,7 @@ class TokenDatabase:
                 cursor.execute('''
                     UPDATE tokens SET
                         name = ?, image_type = ?, species = ?, class = ?, source = ?,
-                        campaign = ?, notes = ?, file_modified = ?, thumbnail_path = ?,
+                        campaign = ?, notes = ?, file_modified = ?,
                         scale = ?, theme = ?, type = ?, subject = ?, style = ?, location = ?, mood = ?,
                         rarity = ?, category = ?, attunement = ?
                     WHERE filepath = ?
@@ -307,7 +304,6 @@ class TokenDatabase:
                     token_data.get('Campaign'),
                     token_data.get('Notes'),
                     token_data.get('file_modified'),
-                    token_data.get('thumbnail_path'),
                     token_data.get('Scale'),
                     token_data.get('Theme'),
                     token_data.get('Type'),
@@ -521,6 +517,23 @@ class TokenDatabase:
             print(f"Error searching tokens: {e}")
             return []
 
+    def _dedupe_case_insensitive(self, values: List[str]) -> List[str]:
+        """
+        Deduplicate values in a case-insensitive way, preserving the first-seen casing.
+
+        Args:
+            values: List of string values
+
+        Returns:
+            Deduplicated list with first-seen casing preserved
+        """
+        seen = {}
+        for value in values:
+            lower = value.lower()
+            if lower not in seen:
+                seen[lower] = value
+        return sorted(seen.values(), key=str.lower)
+
     def get_tag_values(self, tag_type: str) -> List[str]:
         """
         Get all unique values for a specific tag type.
@@ -529,7 +542,7 @@ class TokenDatabase:
             tag_type: The tag field (species, class, source, campaign)
 
         Returns:
-            List of unique values
+            List of unique values (case-insensitive deduplicated)
         """
         try:
             with self.get_connection() as conn:
@@ -546,7 +559,8 @@ class TokenDatabase:
                 ''')
 
                 rows = cursor.fetchall()
-                return [row[0] for row in rows]
+                values = [row[0] for row in rows]
+                return self._dedupe_case_insensitive(values)
 
         except Exception as e:
             print(f"Error getting tag values: {e}")
@@ -561,7 +575,7 @@ class TokenDatabase:
             tag_type: The tag field (species, class, source, campaign, etc.)
 
         Returns:
-            List of unique values
+            List of unique values (case-insensitive deduplicated)
         """
         try:
             with self.get_connection() as conn:
@@ -586,9 +600,10 @@ class TokenDatabase:
                     for row in rows:
                         # Split comma-separated themes
                         all_values.update(self.parse_multivalue_field(row[0]))
-                    return sorted(all_values)
+                    return self._dedupe_case_insensitive(list(all_values))
 
-                return [row[0] for row in rows]
+                values = [row[0] for row in rows]
+                return self._dedupe_case_insensitive(values)
 
         except Exception as e:
             print(f"Error getting tag values by type: {e}")
