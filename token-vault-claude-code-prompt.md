@@ -228,10 +228,10 @@ When syncing database with files:
 pip install flask pillow watchdog
 
 # Run the application
-python app.py
+python3 app.py
 
 # Or with custom config
-python app.py --config /path/to/config.json --port 8080
+python3 app.py --config /path/to/config.json --port 8080
 ```
 
 ## Stretch Goals (Optional)

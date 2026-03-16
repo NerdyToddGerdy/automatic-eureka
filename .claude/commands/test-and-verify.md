@@ -40,7 +40,7 @@ Checking JavaScript syntax:
 
 Testing that the Flask app can start without errors:
 
-!`timeout 5 python app.py --port 5555 2>&1 | head -20 || echo "App startup test complete"`
+!`timeout 5 python3 app.py --port 5555 2>&1 | head -20 || echo "App startup test complete"`
 
 ---
 

@@ -32,7 +32,7 @@ Building the ImageTagger desktop application with Electron.
 
 ### Step 2: Test Flask Backend
 
-!`timeout 3 python app.py 2>&1 | head -10 || echo "Flask check complete"`
+!`timeout 3 python3 app.py 2>&1 | head -10 || echo "Flask check complete"`
 
 ### Step 3: Build Electron App
 

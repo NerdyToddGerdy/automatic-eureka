@@ -144,7 +144,7 @@ open htmlcov/index.html
 sqlite3 tokens.db "EXPLAIN QUERY PLAN SELECT * FROM tokens WHERE image_type = 'Token'"
 
 # Monitor memory usage
-top -pid $(pgrep -f "python app.py")
+top -pid $(pgrep -f "python3 app.py")
 
 # Check for memory leaks (long-running)
 ```

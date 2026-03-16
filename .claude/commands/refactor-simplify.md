@@ -206,7 +206,7 @@ After refactoring, verify:
    !`pytest -v 2>/dev/null | tail -20 || echo "Run pytest to verify"`
 
 2. **Check application starts**:
-   !`timeout 3 python app.py 2>&1 | head -10 || echo "Startup check complete"`
+   !`timeout 3 python3 app.py 2>&1 | head -10 || echo "Startup check complete"`
 
 3. **Review diff**:
    !`git diff --stat`

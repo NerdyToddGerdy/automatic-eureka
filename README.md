@@ -1,6 +1,10 @@
-# Image Vault - Character Image Manager
+# Image Vault
+
+> A local-first image organizer for tabletop RPG players that stores metadata directly in your PNG files—so your tags go wherever your images go.
 
 A hybrid web/desktop application for managing your collection of RPG character images. Perfect for D&D, Pathfinder, and other tabletop RPG players and DMs.
+
+<!-- Add a screenshot: ![Image Vault Screenshot](docs/screenshot.png) -->
 
 ## 🎯 Two Ways to Run
 
@@ -57,7 +61,7 @@ pip install -r requirements.txt
 
 2. Run the Flask server:
 ```bash
-python app.py
+python3 app.py
 ```
 
 3. Open your browser to: http://127.0.0.1:5000
@@ -129,13 +133,13 @@ Edit `config.json` to customize:
 
 ```bash
 # Run on a different port
-python app.py --port 8080
+python3 app.py --port 8080
 
 # Use a custom config file
-python app.py --config /path/to/config.json
+python3 app.py --config /path/to/config.json
 
 # Bind to different host
-python app.py --host 0.0.0.0
+python3 app.py --host 0.0.0.0
 ```
 
 ## Packaging Desktop App
@@ -243,8 +247,8 @@ When the app starts or when you click "Rescan":
 
 ## License
 
-This project is open source and available for personal use.
+MIT License — see [LICENSE](LICENSE) for details.
 
-## Acknowledgments
+---
 
-Built for tabletop RPG enthusiasts who want to organize their ever-growing collection of character tokens!
+Built for tabletop RPG enthusiasts who want to organize their ever-growing collection of character tokens.

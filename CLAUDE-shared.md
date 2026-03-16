@@ -11,14 +11,14 @@
 ### Development
 ```bash
 # Start development server
-python app.py
+python3 app.py
 
 # Install dependencies
 pip install -r requirements.txt
 pip install -r requirements-dev.txt
 
 # Run in development mode with auto-reload
-FLASK_ENV=development python app.py
+FLASK_ENV=development python3 app.py
 ```
 
 ### Testing

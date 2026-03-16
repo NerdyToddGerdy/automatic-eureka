@@ -19,13 +19,13 @@
 ### Start Application
 ```bash
 # Start Flask server (web mode)
-python app.py
+python3 app.py
 
 # Start with specific port
-python app.py --port 5000
+python3 app.py --port 5000
 
 # Development mode with debug
-FLASK_ENV=development python app.py
+FLASK_ENV=development python3 app.py
 
 # Start Electron (desktop mode)
 npm start
@@ -68,7 +68,7 @@ npm run dist
 
 # To reset database, delete and restart
 rm tokens.db
-python app.py
+python3 app.py
 ```
 
 ---
@@ -451,7 +451,7 @@ def test_upload_single_png(chrome_driver, base_url, sample_png_path, test_db):
 ### Web Deployment
 1. Install Python dependencies: `pip install -r requirements.txt`
 2. Set environment variables (if needed)
-3. Run Flask: `python app.py --port 5000`
+3. Run Flask: `python3 app.py --port 5000`
 4. Access at `http://localhost:5000`
 
 ### Electron Packaging

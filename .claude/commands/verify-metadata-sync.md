@@ -152,7 +152,7 @@ Based on the verification:
 
 ## Manual Rescan (if needed)
 
-!`curl -X POST http://localhost:5000/api/scan 2>/dev/null || echo "Start Flask app first: python app.py"`
+!`curl -X POST http://localhost:5000/api/scan 2>/dev/null || echo "Start Flask app first: python3 app.py"`
 
 ---
 

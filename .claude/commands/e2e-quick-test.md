@@ -12,7 +12,7 @@ Running quick end-to-end tests for critical user journeys.
 
 ### 1. Start Flask Server
 
-!`timeout 5 python app.py --port 5001 > /tmp/flask_test.log 2>&1 & echo $! > /tmp/flask_test.pid && sleep 2 && echo "Flask started on port 5001"`
+!`timeout 5 python3 app.py --port 5001 > /tmp/flask_test.log 2>&1 & echo $! > /tmp/flask_test.pid && sleep 2 && echo "Flask started on port 5001"`
 
 ### 2. Verify Server Running
 
