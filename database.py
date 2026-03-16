@@ -79,6 +79,13 @@ class TokenDatabase:
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_category ON tokens(category)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_attunement ON tokens(attunement)')
 
+            # Composite indexes for common multi-field filter combinations
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_type_species  ON tokens(image_type, species)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_type_class    ON tokens(image_type, class)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_type_source   ON tokens(image_type, source)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_type_campaign ON tokens(image_type, campaign)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_date_added    ON tokens(date_added DESC)')
+
             # Run database migrations
             self._migrate_to_drive_support(cursor)
 
