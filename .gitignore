@@ -21,6 +21,10 @@ tokens.db
 tokens/
 thumbnails/
 
+# Test artifacts
+.coverage
+htmlcov/
+
 # Flask
 instance/
 .webassets-cache
