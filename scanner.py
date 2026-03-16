@@ -52,27 +52,27 @@ def get_audio_metadata(filepath: str) -> Optional[dict]:
 class TokenScanner:
     """Scans folders for PNG files and manages token inventory."""
 
-    def __init__(self, token_folder: str, database: TokenDatabase):
+    def __init__(self, database: TokenDatabase, token_folder: Optional[str] = None):
         """
         Initialize the scanner.
 
         Args:
-            token_folder: Path to the folder containing token images
             database: TokenDatabase instance
+            token_folder: Optional path to folder for local scanning (Reference Mode doesn't need this)
         """
         self.token_folder = token_folder
         self.database = database
-
-        # Ensure folder exists
-        os.makedirs(token_folder, exist_ok=True)
 
     def find_image_files(self) -> List[str]:
         """
         Recursively find all image files (PNG and JPEG) in the token folder.
 
         Returns:
-            List of absolute file paths
+            List of absolute file paths (empty if no token_folder configured)
         """
+        if not self.token_folder:
+            return []
+
         image_files = []
 
         for root, dirs, files in os.walk(self.token_folder):
@@ -273,8 +273,11 @@ class TokenScanner:
         Recursively find all audio files in the token folder.
 
         Returns:
-            List of absolute file paths
+            List of absolute file paths (empty if no token_folder configured)
         """
+        if not self.token_folder:
+            return []
+
         audio_files = []
 
         for root, dirs, files in os.walk(self.token_folder):

@@ -12,7 +12,7 @@ import io
 
 from database import TokenDatabase
 from metadata import TokenMetadata
-from scanner import TokenScanner, TokenFolderWatcher
+from scanner import TokenScanner
 from drive_client import DriveClient
 from drive_sync import DriveSyncService
 from google.oauth2.credentials import Credentials
@@ -26,7 +26,6 @@ CORS(app)
 # Configuration
 CONFIG_FILE = 'config.json'
 DEFAULT_CONFIG = {
-    'token_folder': './tokens',
     'thumbnail_size': [150, 150],
     'watch_folder': True,
     'port': 5000,
@@ -63,7 +62,6 @@ AUDIO_TYPES = ['Music', 'SoundEffect', 'Ambience', 'Dialogue']
 # Global objects
 db = None
 scanner = None
-watcher = None
 drive_client = None
 drive_sync = None
 image_cache = None
@@ -143,7 +141,7 @@ def save_config():
 
 def initialize_app():
     """Initialize the application components."""
-    global db, scanner, watcher, drive_client, drive_sync, image_cache
+    global db, scanner, drive_client, drive_sync, image_cache
 
     load_config()
 
@@ -183,60 +181,9 @@ def initialize_app():
     image_cache = get_image_cache(max_size_mb=100)
     print("✓ Image cache initialized (100MB)")
 
-    # Initialize scanner
-    scanner = TokenScanner(
-        token_folder=config['token_folder'],
-        database=db
-    )
-
-    # Perform initial scan
-    print("Performing initial scan...")
-    results = scanner.scan_and_sync()
-    print(f"Scan complete: {results['added']} added, {results['updated']} updated, "
-          f"{results['removed']} removed, {results['errors']} errors")
-
-    # Start folder watcher if enabled
-    if config.get('watch_folder', True):
-        watcher = TokenFolderWatcher(scanner, config['token_folder'])
-        watcher.start()
-
-
-def get_thumbnail_path(token_id: int, filepath: str) -> str:
-    """
-    Generate or retrieve thumbnail path for a token.
-
-    Args:
-        token_id: Token ID
-        filepath: Original file path
-
-    Returns:
-        Path to thumbnail file
-    """
-    # Create hash-based filename
-    file_hash = hashlib.md5(filepath.encode()).hexdigest()
-    thumbnail_filename = f"{token_id}_{file_hash}.png"
-    thumbnail_path = os.path.join('thumbnails', thumbnail_filename)
-
-    return thumbnail_path
-
-
-def generate_thumbnail(filepath: str, thumbnail_path: str, size: tuple = (150, 150)):
-    """
-    Generate a thumbnail for an image.
-
-    Args:
-        filepath: Source image path
-        thumbnail_path: Destination thumbnail path
-        size: Thumbnail size (width, height)
-    """
-    try:
-        img = Image.open(filepath)
-        img.thumbnail(size, Image.Resampling.LANCZOS)
-        img.save(thumbnail_path, 'PNG')
-        return True
-    except Exception as e:
-        print(f"Error generating thumbnail for {filepath}: {e}")
-        return False
+    # Initialize scanner (Reference Mode - no local token folder needed)
+    scanner = TokenScanner(database=db)
+    print("✓ Scanner initialized (Reference Mode - files stay in original locations)")
 
 
 def generate_thumbnail_in_memory(filepath: str, size: tuple = (150, 150)) -> Optional[bytes]:
@@ -519,146 +466,14 @@ def update_token_path(token_id):
 
 @app.route('/api/tokens/upload', methods=['POST'])
 def upload_tokens():
-    """Upload one or more token files (to Drive or local)."""
-    try:
-        if 'files' not in request.files:
-            return jsonify({'success': False, 'error': 'No files provided'}), 400
-
-        files = request.files.getlist('files')
-        image_type = request.form.get('image_type', 'Token')
-        target_folder_id = request.form.get('drive_folder_id')  # Optional Drive folder
-
-        # Validate image type
-        if image_type not in IMAGE_TYPES:
-            image_type = 'Token'
-
-        # Extract tag values from form data
-        tag_values = {}
-        tag_fields = ['Species', 'Class', 'Source', 'Campaign',  # Token
-                      'Scale', 'Theme',                           # Map
-                      'Type',                                      # Handout
-                      'Subject', 'Style',                          # Portrait
-                      'Location', 'Mood',                          # Scene
-                      'Rarity', 'Category', 'Attunement']          # Item
-
-        for tag_field in tag_fields:
-            value = request.form.get(tag_field)
-            if value:
-                tag_values[tag_field] = value
-
-        results = {'added': 0, 'errors': 0, 'error_files': [], 'upload_mode': 'local'}
-
-        # Determine upload mode (Drive or local)
-        use_drive = drive_client is not None and target_folder_id is not None
-
-        if use_drive:
-            results['upload_mode'] = 'drive'
-
-        for file in files:
-            if file and is_supported_image(file.filename):
-                filename = secure_filename(file.filename)
-
-                # Prepare metadata
-                metadata = {
-                    'ImageType': image_type,
-                    'DateAdded': datetime.now().isoformat()
-                }
-                metadata.update(tag_values)
-
-                if use_drive:
-                    # ===== GOOGLE DRIVE UPLOAD =====
-                    try:
-                        # Read file into memory
-                        file_bytes = file.read()
-                        file_stream = io.BytesIO(file_bytes)
-
-                        # Determine MIME type
-                        if filename.lower().endswith('.png'):
-                            mimetype = 'image/png'
-                        elif filename.lower().endswith(('.jpg', '.jpeg')):
-                            mimetype = 'image/jpeg'
-                        else:
-                            mimetype = 'application/octet-stream'
-
-                        # Calculate file hash for duplicate detection
-                        from file_utils import calculate_file_hash_from_bytes
-                        file_hash = calculate_file_hash_from_bytes(file_bytes)
-
-                        # Check for duplicates
-                        existing = db.find_by_hash(file_hash)
-                        if existing:
-                            results['errors'] += 1
-                            results['error_files'].append(f"{filename} (duplicate)")
-                            continue
-
-                        # Upload to Google Drive
-                        drive_result = drive_client.upload_file(
-                            file_stream=file_stream,
-                            filename=filename,
-                            folder_id=target_folder_id,
-                            metadata=metadata,
-                            mimetype=mimetype
-                        )
-
-                        # Add to database
-                        token_data = {
-                            'drive_file_id': drive_result['id'],
-                            'drive_folder_id': drive_result['parents'][0] if 'parents' in drive_result else target_folder_id,
-                            'drive_web_view_link': drive_result.get('webViewLink'),
-                            'drive_thumbnail_link': drive_result.get('thumbnailLink'),
-                            'filepath': f"drive://{drive_result['id']}",  # Placeholder
-                            'filename': filename,
-                            'file_hash': file_hash,
-                            'file_modified': drive_result.get('modifiedTime'),
-                            'last_synced_from_drive': datetime.now().isoformat(),
-                            **metadata
-                        }
-
-                        if db.add_token(token_data):
-                            results['added'] += 1
-                        else:
-                            # Rollback: delete from Drive
-                            try:
-                                drive_client.delete_file(drive_result['id'])
-                            except:
-                                pass
-                            results['errors'] += 1
-                            results['error_files'].append(f"{filename} (db error)")
-
-                    except Exception as e:
-                        print(f"Error uploading {filename} to Drive: {e}")
-                        results['errors'] += 1
-                        results['error_files'].append(f"{filename} ({str(e)})")
-
-                else:
-                    # ===== LOCAL FILE UPLOAD (existing logic) =====
-                    filepath = os.path.join(config['token_folder'], filename)
-
-                    # Save the file
-                    file.save(filepath)
-
-                    # Write metadata to file
-                    file_metadata = TokenMetadata.read_token_metadata(filepath)
-                    file_metadata.update(metadata)
-                    TokenMetadata.write_token_metadata(filepath, file_metadata)
-
-                    # Add to database (will be picked up by scanner if watching)
-                    if not config.get('watch_folder'):
-                        if scanner.add_new_file(filepath):
-                            results['added'] += 1
-                        else:
-                            results['errors'] += 1
-                            results['error_files'].append(filename)
-                    else:
-                        results['added'] += 1
-            else:
-                results['errors'] += 1
-                results['error_files'].append(file.filename if file else 'unknown')
-
-        return jsonify({'success': True, 'results': results})
-
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+    """
+    Legacy upload endpoint - browser mode is no longer supported.
+    Use /api/tokens/add-reference instead (Electron desktop app required).
+    """
+    return jsonify({
+        'success': False,
+        'error': 'Browser upload mode is no longer supported. Please use the Electron desktop app with reference mode. Use /api/tokens/add-reference to add files by path.'
+    }), 400
 
 
 @app.route('/api/tokens/check-duplicates', methods=['POST'])
@@ -808,7 +623,7 @@ def add_file_reference():
         # Calculate hash
         file_hash = calculate_file_hash(filepath)
 
-        # Check for existing duplicate
+        # Check for existing duplicate by hash
         existing = db.find_by_hash(file_hash)
 
         if existing and not overwrite_existing:
@@ -817,6 +632,13 @@ def add_file_reference():
                 'error': 'Duplicate file exists',
                 'existing_token': existing
             }), 409
+
+        # Also check if filepath already exists in database (different hash = file was modified)
+        existing_by_path = db.get_token_by_filepath(filepath)
+        if existing_by_path and not overwrite_existing:
+            # File already tracked - update instead of failing
+            overwrite_existing = True
+            existing = existing_by_path
 
         # Read metadata from PNG
         metadata = TokenMetadata.read_token_metadata(filepath)
@@ -1567,7 +1389,7 @@ def update_config():
     try:
         data = request.get_json()
 
-        for key in ['token_folder', 'thumbnail_size', 'watch_folder', 'port', 'host']:
+        for key in ['thumbnail_size', 'watch_folder', 'port', 'host']:
             if key in data:
                 config[key] = data[key]
 
@@ -1697,84 +1519,14 @@ def delete_audio_file(audio_id):
 
 @app.route('/api/audio/upload', methods=['POST'])
 def upload_audio_files():
-    """Upload one or more audio files."""
-    try:
-        if 'files' not in request.files:
-            return jsonify({'success': False, 'error': 'No files provided'}), 400
-
-        files = request.files.getlist('files')
-        audio_type = request.form.get('audio_type', 'Music')
-
-        # Validate audio type
-        if audio_type not in AUDIO_TYPES:
-            audio_type = 'Music'
-
-        # Extract tag values from form data
-        tag_values = {}
-        tag_fields = ['Genre', 'Mood', 'Intensity', 'Character', 'Location', 'Source', 'Campaign']
-
-        for tag_field in tag_fields:
-            value = request.form.get(tag_field)
-            if value:
-                tag_values[tag_field] = value
-
-        results = {'added': 0, 'errors': 0, 'error_files': []}
-
-        for file in files:
-            if file and is_supported_audio(file.filename):
-                filename = secure_filename(file.filename)
-
-                # Read file into memory FIRST to calculate hash before saving
-                file_bytes = file.read()
-                file_hash = hashlib.sha256(file_bytes).hexdigest()
-
-                # Check for duplicates BEFORE saving to disk
-                existing = db.find_audio_by_hash(file_hash)
-                if existing:
-                    results['errors'] += 1
-                    results['error_files'].append(f"{filename} (duplicate)")
-                    continue
-
-                filepath = os.path.join(config['token_folder'], 'audio', filename)
-
-                # Ensure audio folder exists
-                os.makedirs(os.path.dirname(filepath), exist_ok=True)
-
-                # Now save the file to disk
-                with open(filepath, 'wb') as f:
-                    f.write(file_bytes)
-
-                # Get audio metadata
-                audio_meta = get_audio_metadata(filepath)
-
-                # Prepare audio data
-                audio_data = {
-                    'filepath': filepath,
-                    'filename': filename,
-                    'Name': os.path.splitext(filename)[0],
-                    'AudioType': audio_type,
-                    'DateAdded': datetime.now().isoformat(),
-                    'file_modified': datetime.fromtimestamp(os.path.getmtime(filepath)).isoformat(),
-                    'file_hash': file_hash,
-                    'duration_seconds': audio_meta.get('duration_seconds') if audio_meta else None,
-                    'format': audio_meta.get('format') if audio_meta else os.path.splitext(filename)[1][1:].upper(),
-                    'file_size': os.path.getsize(filepath)
-                }
-                audio_data.update(tag_values)
-
-                if db.add_audio_file(audio_data):
-                    results['added'] += 1
-                else:
-                    results['errors'] += 1
-                    results['error_files'].append(filename)
-            else:
-                results['errors'] += 1
-                results['error_files'].append(file.filename if file else 'unknown')
-
-        return jsonify({'success': True, 'results': results})
-
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+    """
+    Legacy upload endpoint - browser mode is no longer supported.
+    Use /api/audio/add-reference instead (Electron desktop app required).
+    """
+    return jsonify({
+        'success': False,
+        'error': 'Browser upload mode is no longer supported. Please use the Electron desktop app with reference mode. Use /api/audio/add-reference to add files by path.'
+    }), 400
 
 
 @app.route('/api/audio/stream/<int:audio_id>', methods=['GET'])
@@ -2071,10 +1823,7 @@ def get_drive_status():
 
 def cleanup():
     """Cleanup resources on shutdown."""
-    global watcher
-
-    if watcher:
-        watcher.stop()
+    pass  # No cleanup needed in Reference Mode
 
 
 if __name__ == '__main__':
@@ -2102,9 +1851,10 @@ if __name__ == '__main__':
 
     print(f"\nImage Vault is running!")
     print(f"Open your browser to: http://{host}:{port}")
-    print(f"Token folder: {os.path.abspath(config['token_folder'])}")
-    print(f"Folder watching: {'enabled' if config.get('watch_folder') else 'disabled'}")
     print("\nPress Ctrl+C to stop\n")
 
     # Run the Flask app
-    app.run(host=host, port=port, debug=True)
+    # Debug mode disabled by default to prevent high CPU usage from auto-reloader
+    # Enable with: FLASK_DEBUG=true python3 app.py
+    debug_mode = os.environ.get('FLASK_DEBUG', '').lower() == 'true'
+    app.run(host=host, port=port, debug=debug_mode)
