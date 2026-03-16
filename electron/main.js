@@ -4,6 +4,16 @@ const { spawn } = require('child_process');
 const Store = require('electron-store');
 const OAuthHandler = require('./oauth-handler');
 
+// Handle EPIPE errors gracefully (occurs when writing to closed pipes)
+process.stdout.on('error', (err) => {
+  if (err.code === 'EPIPE') return;
+  throw err;
+});
+process.stderr.on('error', (err) => {
+  if (err.code === 'EPIPE') return;
+  throw err;
+});
+
 let mainWindow;
 let flaskProcess;
 let oauthHandler;
@@ -64,19 +74,13 @@ function startFlaskServer(tokens) {
   });
 
   flaskProcess.stdout.on('data', (data) => {
-    try {
-      console.log(`Flask: ${data}`);
-    } catch (e) {
-      // Ignore EPIPE errors in Electron
-    }
+    // Log Flask output (EPIPE errors handled at process level)
+    console.log(`Flask: ${data}`);
   });
 
   flaskProcess.stderr.on('data', (data) => {
-    try {
-      console.error(`Flask Error: ${data}`);
-    } catch (e) {
-      // Ignore EPIPE errors in Electron
-    }
+    // Log Flask errors (EPIPE errors handled at process level)
+    console.error(`Flask Error: ${data}`);
   });
 }
 
@@ -90,21 +94,13 @@ async function ensureAuthentication() {
     const storedTokens = oauthHandler.loadStoredTokens();
 
     if (storedTokens && oauthHandler.hasValidTokens()) {
-      try {
-        console.log('Using stored authentication tokens');
-      } catch (e) {
-        // Ignore EPIPE errors in Electron
-      }
+      console.log('Using stored authentication tokens');
 
       // Refresh if needed
       const tokens = await oauthHandler.getTokens();
       return oauthHandler.getTokensForPython();
     } else {
-      try {
-        console.log('No valid tokens found, starting authentication flow...');
-      } catch (e) {
-        // Ignore EPIPE errors in Electron
-      }
+      console.log('No valid tokens found, starting authentication flow...');
 
       // Show dialog to inform user
       dialog.showMessageBoxSync({
@@ -120,11 +116,7 @@ async function ensureAuthentication() {
       return oauthHandler.getTokensForPython();
     }
   } catch (error) {
-    try {
-      console.error('Authentication error:', error);
-    } catch (e) {
-      // Ignore EPIPE errors in Electron
-    }
+    console.error('Authentication error:', error);
 
     // Show error dialog with option to skip
     const result = dialog.showMessageBoxSync({
@@ -151,8 +143,8 @@ async function ensureAuthentication() {
 }
 
 app.whenReady().then(async () => {
-  // Try to authenticate (optional - can skip)
-  const tokens = await ensureAuthentication();
+  // Google Drive disabled - run in local-only mode
+  const tokens = null;
 
   // Start Flask with or without OAuth tokens
   // null tokens means user skipped Google Drive

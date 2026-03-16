@@ -1,5 +1,4 @@
 {
-  "token_folder": "./tokens",
   "thumbnail_size": [150, 150],
   "watch_folder": true,
   "port": 5000,

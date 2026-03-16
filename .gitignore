@@ -17,6 +17,10 @@ ENV/
 *.db
 tokens.db
 
+# Media files - reference mode only
+tokens/
+thumbnails/
+
 # Flask
 instance/
 .webassets-cache

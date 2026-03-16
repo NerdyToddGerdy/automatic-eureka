@@ -9,7 +9,7 @@
     "package-win": "electron-builder --win",
     "package-linux": "electron-builder --linux"
   },
-  "author": "",
+  "author": "Todd Gerdy",
   "license": "MIT",
   "dependencies": {
     "electron-store": "^8.2.0"
