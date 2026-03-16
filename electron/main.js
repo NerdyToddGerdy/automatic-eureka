@@ -160,10 +160,31 @@ app.whenReady().then(async () => {
   });
 });
 
-app.on('window-all-closed', () => {
-  if (flaskProcess) {
-    flaskProcess.kill();
+let isQuitting = false;
+
+app.on('before-quit', (event) => {
+  if (flaskProcess && !flaskProcess.killed && !isQuitting) {
+    event.preventDefault();
+    isQuitting = true;
+
+    // Give Flask up to 3s to exit cleanly before force-killing
+    const forceKillTimer = setTimeout(() => {
+      if (!flaskProcess.killed) {
+        flaskProcess.kill('SIGKILL');
+      }
+      app.quit();
+    }, 3000);
+
+    flaskProcess.once('exit', () => {
+      clearTimeout(forceKillTimer);
+      app.quit();
+    });
+
+    flaskProcess.kill('SIGTERM');
   }
+});
+
+app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
