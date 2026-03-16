@@ -1,48 +1,83 @@
 # Changelog
 
-All notable changes to Image Vault will be documented in this file.
+All notable changes to Image Vault are documented here.
 
-## [2.0.0] - 2024-12-16
+Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-### Added - Electron Desktop Application
-- **Desktop App Support**: Image Vault can now run as an Electron desktop application
-- **Reference-in-Place Mode**: When running as desktop app, files are referenced at their original location instead of being copied
-- **Mode Indicator**: Visual indicator shows whether you're in "Reference Mode" (Electron) or "Copy Mode" (browser)
-- **Dual Mode Support**: Same codebase works as both web app and desktop app
-- **Auto File Path Detection**: Electron automatically extracts file paths from drag-drop and file browser
+---
 
-### Technical Details
-- Added Electron main process (`electron/main.js`) that manages Flask subprocess
-- Added preload script (`electron/preload.js`) with secure contextBridge API
-- Enhanced frontend to detect Electron environment and use reference APIs
-- New helper functions for reference-mode file operations
-- Backend endpoints already supported both copy and reference modes
+## [Unreleased]
 
-### Running Options
-- **Desktop App**: `npm start` - References files in place, doesn't copy them
-- **Web App**: `python3 app.py` + browser - Copies files to vault (traditional mode)
+---
 
-### Packaging Support
-- macOS: `npm run package-mac` → Creates .dmg installer
-- Windows: `npm run package-win` → Creates .exe installer
-- Linux: `npm run package-linux` → Creates AppImage
+## [2.0.0] - 2026-03-15
 
-### Benefits
-- No duplicate files when using desktop app
-- Organize images in your own folder structure
-- Database tracks original file locations
-- Existing file scanning workflows still work
-- "Import Folder" feature now consistent with Browse/Drag-Drop in desktop mode
+Major architectural release. Image Vault is now a **Reference Mode only** Electron desktop application. Copy Mode, browser-based upload, and Google Drive sync have been removed to simplify the codebase and sharpen the focus on the desktop experience.
 
-## [1.0.0] - Previous Release
+### Removed
+- **Copy Mode** — files are no longer copied into a local `tokens/` folder. All assets are referenced in place from their original locations on disk.
+- **Browser upload** — the drag-and-drop upload flow in the web UI is gone. File import now requires Electron so absolute file paths are available.
+- **Google Drive sync** — Drive integration (OAuth flow, folder monitoring, bidirectional sync) removed. `drive_client.py` and `drive_sync.py` remain but are not activated.
+- `token_folder` removed from `config.json`.
+- `tokens/` and `thumbnails/` removed from version control (now in `.gitignore`).
+- Sample token and thumbnail artifacts removed from the repository.
 
-### Initial Features
-- PNG metadata storage
-- Visual gallery with grid/list views
-- Tagging system (Species, Class, Source, Campaign)
-- Search and filtering
-- Bulk operations
-- Auto-scan and folder watching
-- Multiple image types (Token, Map, Handout, Portrait, Scene, Item)
-- Duplicate detection with rename/skip/overwrite options
-- Dark fantasy themed UI
+### Changed
+- `initialize_app()` simplified — no longer initialises the folder watcher or Copy Mode path logic.
+- `scanner.py` — `token_folder` is now optional; scanner handles the Reference Mode-only case gracefully.
+- Tag values deduplicated case-insensitively in `get_tag_values()` (`_dedupe_case_insensitive()` added to `database.py`).
+- All documentation and dev-guide commands standardised to `python3`.
+- Electron main process gains global EPIPE error handlers to suppress broken-pipe noise on macOS.
+
+### Fixed
+- Gallery filters (image type, species, class, source, campaign) now apply correctly after switching values.
+- Upload modal now populates type-specific tag fields when an image type is selected.
+
+### Added
+- `APP_VERSION = "2.0.0"` constant in `app.py`.
+- `GET /api/version` endpoint — returns `{ "version": "2.0.0" }`.
+- `LICENSE` file (MIT).
+
+---
+
+## [1.1.0] - 2025-12
+
+### Added
+- Audio file support (MP3, WAV, OGG, M4A, FLAC) — indexing, tagging, and streaming playback.
+- Audio type schemas: Music, SoundEffect, Ambience, Dialogue with type-specific tag fields.
+- `GET /api/audio`, `GET /api/audio/<id>`, `GET /api/audio/stream/<id>` endpoints.
+- Multi-select batch import wizard in Electron — assign type and tags to groups of files before adding.
+- Case-insensitive tag autocomplete scoped to the selected image type.
+- In-memory + disk thumbnail cache (`cache.py`).
+
+### Fixed
+- Duplicate file detection by SHA-256 hash now correctly handles same-content / different-name files.
+- Missing file indicator shown on token cards when the source file has moved or been deleted.
+
+---
+
+## [1.0.0] - 2025-09
+
+Initial release of Image Vault as an Electron desktop application wrapping a Flask backend.
+
+### Added
+- Flask backend with SQLite index (`database.py`).
+- PNG metadata storage via Pillow text chunks — tags embedded directly in image files as source of truth (`metadata.py`).
+- Reference Mode — files indexed in place from their original locations on disk.
+- Electron desktop wrapper with secure preload bridge (`electron/main.js`, `electron/preload.js`).
+- Folder scanner with Watchdog file-watcher for automatic re-indexing (`scanner.py`).
+- Six image types with type-specific tag schemas: Token, Map, Handout, Portrait, Scene, Item.
+- Token gallery with filtering by image type, species, class, source, and campaign.
+- Single-item edit modal with dynamic type-specific tag fields.
+- Bulk edit and bulk delete for multi-selected tokens.
+- Thumbnail generation and caching (150×150 JPEG).
+- Full REST API: `GET /api/tokens`, `PUT /api/tokens/<id>`, `DELETE /api/tokens/<id>`, and more.
+- Dark fantasy UI theme.
+
+---
+
+[Unreleased]: https://github.com/NerdyToddGerdy/automatic-eureka/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/NerdyToddGerdy/automatic-eureka/compare/v1.1.0...v2.0.0
+[1.1.0]: https://github.com/NerdyToddGerdy/automatic-eureka/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/NerdyToddGerdy/automatic-eureka/releases/tag/v1.0.0

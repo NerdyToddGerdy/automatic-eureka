@@ -23,6 +23,8 @@ from cache import get_image_cache
 app = Flask(__name__)
 CORS(app)
 
+APP_VERSION = "2.0.0"
+
 # Configuration
 CONFIG_FILE = 'config.json'
 DEFAULT_CONFIG = {
@@ -1143,6 +1145,12 @@ def rescan():
 
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/version', methods=['GET'])
+def get_version():
+    """Get application version."""
+    return jsonify({'success': True, 'version': APP_VERSION})
 
 
 @app.route('/api/stats', methods=['GET'])
