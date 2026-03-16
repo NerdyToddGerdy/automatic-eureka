@@ -2,6 +2,7 @@
 let tokens = [];
 let filteredTokens = [];
 let selectedTokenIds = new Set();
+let tokensAbortController = null;
 let currentFilters = {
     search: '',
     image_type: '',
@@ -770,11 +771,17 @@ function setupEventListeners() {
 
 // Load tokens from API
 async function loadTokens() {
+    // Cancel any in-flight request superseded by this one
+    if (tokensAbortController) {
+        tokensAbortController.abort();
+    }
+    tokensAbortController = new AbortController();
+
     showLoading();
 
     try {
         const params = new URLSearchParams(currentFilters);
-        const response = await fetch(`/api/tokens?${params}`);
+        const response = await fetch(`/api/tokens?${params}`, { signal: tokensAbortController.signal });
         const data = await response.json();
 
         if (data.success) {
@@ -786,6 +793,7 @@ async function loadTokens() {
             showError('Failed to load tokens');
         }
     } catch (error) {
+        if (error.name === 'AbortError') return; // Superseded by a newer request
         showError('Error loading tokens: ' + error.message);
     } finally {
         hideLoading();
