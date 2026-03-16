@@ -18,9 +18,6 @@
                 <button id="uploadBtn" class="btn btn-primary">
                     <span>📤</span> Upload Images
                 </button>
-                <button id="driveBtn" class="btn btn-secondary">
-                    <span>☁️</span> Google Drive
-                </button>
                 <button id="scanBtn" class="btn btn-secondary">
                     <span>🔄</span> Rescan
                 </button>
@@ -894,55 +891,6 @@
                         <button type="button" class="btn btn-secondary modal-close-btn">Cancel</button>
                     </div>
                 </form>
-            </div>
-        </div>
-    </div>
-
-    <!-- Google Drive Settings Modal -->
-    <div id="driveModal" class="modal" style="display: none;">
-        <div class="modal-overlay"></div>
-        <div class="modal-content modal-wide">
-            <button class="modal-close">&times;</button>
-
-            <div class="modal-body">
-                <h2>Google Drive Sync</h2>
-
-                <!-- Drive Status -->
-                <div id="driveStatus" class="drive-status">
-                    <div class="status-loading">Checking connection...</div>
-                </div>
-
-                <!-- Monitored Folders Section -->
-                <div id="monitoredFoldersSection" style="display: none;">
-                    <h3>Monitored Folders</h3>
-                    <p class="modal-subtitle">These folders are automatically synced to your vault</p>
-
-                    <div id="monitoredFoldersList" class="monitored-folders-list">
-                        <!-- Monitored folders will be inserted here -->
-                    </div>
-
-                    <button id="addDriveFolderBtn" class="btn btn-primary" style="margin-top: 16px;">
-                        <span>➕</span> Add Folder to Sync
-                    </button>
-                </div>
-
-                <!-- Drive Folder Browser (hidden by default) -->
-                <div id="driveBrowserSection" style="display: none;">
-                    <h3>Browse Google Drive</h3>
-                    <p class="modal-subtitle">Select a folder to sync</p>
-
-                    <div id="driveBreadcrumb" class="drive-breadcrumb">
-                        <button class="breadcrumb-item" data-folder-id="root">My Drive</button>
-                    </div>
-
-                    <div id="driveFoldersList" class="drive-folders-list">
-                        <!-- Drive folders will be inserted here -->
-                    </div>
-
-                    <div class="form-actions">
-                        <button id="cancelBrowseBtn" class="btn btn-secondary">Back to Monitored Folders</button>
-                    </div>
-                </div>
             </div>
         </div>
     </div>

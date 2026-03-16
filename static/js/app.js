@@ -50,16 +50,17 @@ let wizardState = {
 
 /**
  * Detect if running in Electron environment
+ * Note: This app is Electron-only. Browser mode has been removed.
  */
 const isElectron = typeof window.electronAPI !== 'undefined' && window.electronAPI.isElectron;
 
 /**
- * Extract absolute file paths from File objects
- * Only works in Electron - returns null in browsers
+ * Extract absolute file paths from File objects.
+ * Requires Electron - throws error if not available.
  */
 function getFilePaths(files) {
   if (!isElectron) {
-    return null; // Browser cannot access file paths
+    throw new Error('This app requires the Electron desktop application. Browser mode is not supported.');
   }
 
   const paths = [];
@@ -69,17 +70,10 @@ function getFilePaths(files) {
       paths.push({ file, path });
     } else {
       console.warn(`Could not get path for file: ${file.name}`);
-      return null; // Fallback if any path fails
+      throw new Error(`Could not get path for file: ${file.name}`);
     }
   }
   return paths;
-}
-
-/**
- * Determine if we should use reference mode (Electron) or copy mode (browser)
- */
-function shouldUseReferenceMode() {
-  return isElectron;
 }
 
 /**
@@ -89,13 +83,8 @@ function updateModeIndicator() {
   const indicator = document.getElementById('modeIndicator');
   if (!indicator) return;
 
-  if (isElectron) {
-    indicator.textContent = '📌 Reference Mode (Files stay in place)';
-    indicator.className = 'mode-indicator reference-mode';
-  } else {
-    indicator.textContent = '📁 Copy Mode (Files copied to vault)';
-    indicator.className = 'mode-indicator copy-mode';
-  }
+  indicator.textContent = '📌 Reference Mode (Files stay in place)';
+  indicator.className = 'mode-indicator reference-mode';
   indicator.style.display = 'block';
 }
 
@@ -204,6 +193,10 @@ class TagDropdown {
             if (data.success) {
                 this.options = data.values || [];
                 this.filteredOptions = [...this.options];
+                // Re-render if dropdown is already open
+                if (this.isOpen) {
+                    this.renderOptions();
+                }
             }
         } catch (error) {
             console.error('Error loading tag options:', error);
@@ -404,7 +397,8 @@ class TagMultiSelect {
     async loadOptions() {
         try {
             const fieldLower = this.fieldName.toLowerCase();
-            const response = await fetch(`/api/tags/${this.imageType.toLowerCase()}/${fieldLower}`);
+            // Use imageType as-is (e.g., "Map" not "map") for the API call
+            const response = await fetch(`/api/tags/${this.imageType}/${fieldLower}`);
             const data = await response.json();
             this.options = data.values || [];
             this.filterOptions('');
@@ -1560,26 +1554,11 @@ async function handleFileUpload(e) {
 
         showLoading();
 
-        // STEP 2: Determine if we can reference in place (Electron only)
-        const useReference = shouldUseReferenceMode();
-        let filePaths = null;
-
-        if (useReference) {
-            filePaths = getFilePaths(files);
-            if (!filePaths) {
-                console.warn('Failed to extract file paths, falling back to copy mode');
-            }
-        }
+        // STEP 2: Get file paths (Electron required)
+        const filePaths = getFilePaths(files);
 
         // STEP 3: Check for duplicates
-        let duplicateInfo;
-        if (filePaths) {
-            // Reference mode: check by filepath
-            duplicateInfo = await checkForDuplicatesByPath(filePaths.map(fp => fp.path));
-        } else {
-            // Copy mode: check by uploading files
-            duplicateInfo = await checkForDuplicates(files);
-        }
+        const duplicateInfo = await checkForDuplicatesByPath(filePaths.map(fp => fp.path));
 
         // STEP 4: Show batch tag modal
         hideLoading();
@@ -1591,7 +1570,7 @@ async function handleFileUpload(e) {
             hideLoading();
             const userChoices = await showDuplicateConfirmation(
                 duplicateInfo.duplicates,
-                filePaths || files
+                filePaths
             );
 
             if (userChoices === null) {
@@ -1601,19 +1580,10 @@ async function handleFileUpload(e) {
             }
 
             showLoading();
-
-            if (filePaths) {
-                await addFileReferencesWithChoices(filePaths, userChoices, imageType, tags);
-            } else {
-                await uploadFilesWithChoices(files, userChoices, imageType, tags);
-            }
+            await addFileReferencesWithChoices(filePaths, userChoices, imageType, tags);
         } else {
             // No duplicates
-            if (filePaths) {
-                await addFileReferencesDirectly(filePaths, imageType, tags);
-            } else {
-                await uploadFilesDirectly(files, imageType, tags);
-            }
+            await addFileReferencesDirectly(filePaths, imageType, tags);
         }
 
         loadTokens();
@@ -1820,25 +1790,6 @@ function formatDate(dateString) {
 
 // Duplicate Detection Functions
 
-// Check files for duplicates
-async function checkForDuplicates(files) {
-    const formData = new FormData();
-    for (let file of files) {
-        formData.append('files', file);
-    }
-
-    const response = await fetch('/api/tokens/check-duplicates', {
-        method: 'POST',
-        body: formData
-    });
-
-    if (!response.ok) {
-        throw new Error('Failed to check for duplicates');
-    }
-
-    return await response.json();
-}
-
 // Show duplicate confirmation modal and return user choices
 async function showDuplicateConfirmation(duplicates, files) {
     return new Promise((resolve) => {
@@ -2034,132 +1985,8 @@ async function showDuplicateConfirmation(duplicates, files) {
     });
 }
 
-// Upload files directly (no duplicates)
-async function uploadFilesDirectly(files, imageType, tags = {}) {
-    const formData = new FormData();
-    for (let file of files) {
-        formData.append('files', file);
-    }
-
-    // Add image type to request
-    formData.append('image_type', imageType);
-
-    // Add tag values to form data
-    for (const [tagField, tagValue] of Object.entries(tags)) {
-        formData.append(tagField, tagValue);
-    }
-
-    const response = await fetch('/api/tokens/upload', {
-        method: 'POST',
-        body: formData
-    });
-
-    const data = await response.json();
-
-    if (data.success) {
-        showSuccess(`Uploaded ${data.results.added} images`);
-    } else {
-        showError('Failed to upload images');
-    }
-}
-
-// Upload files with user choices for duplicates
-async function uploadFilesWithChoices(files, userChoices, imageType, tags = {}) {
-    let addedCount = 0;
-    let skippedCount = 0;
-    let renamedCount = 0;
-    const renamedFiles = []; // Track renamed filenames to avoid conflicts
-
-    for (let file of files) {
-        const choice = userChoices[file.name];
-
-        // Handle skip action
-        if (choice === 'skip') {
-            skippedCount++;
-            continue;
-        }
-
-        // Prepare form data
-        const formData = new FormData();
-        let fileToUpload = file;
-        let newFilename = null;
-
-        // Handle rename action
-        if (typeof choice === 'object' && choice.action === 'rename') {
-            const ext = file.name.substring(file.name.lastIndexOf('.'));
-
-            if (choice.renameType === 'auto') {
-                // Generate auto-numbered filename
-                newFilename = await generateAutoNumberedFilename(file.name, renamedFiles);
-                renamedFiles.push(newFilename);
-            } else if (choice.renameType === 'manual' && choice.customName) {
-                // Validate custom filename
-                const validation = validateCustomFilename(choice.customName, ext);
-
-                if (!validation.valid) {
-                    showError(`Invalid filename for ${file.name}: ${validation.error}`);
-                    skippedCount++;
-                    continue;
-                }
-
-                newFilename = validation.filename;
-
-                // Check if custom name already exists
-                if (await checkFilenameExists(newFilename) || renamedFiles.includes(newFilename)) {
-                    showError(`Filename ${newFilename} already exists. Skipping ${file.name}.`);
-                    skippedCount++;
-                    continue;
-                }
-
-                renamedFiles.push(newFilename);
-            } else {
-                // Manual selected but no custom name provided - skip
-                showError(`No custom filename provided for ${file.name}. Skipping.`);
-                skippedCount++;
-                continue;
-            }
-
-            // Create new File object with renamed filename
-            fileToUpload = new File([file], newFilename, { type: file.type });
-            renamedCount++;
-        }
-
-        formData.append('files', fileToUpload);
-        formData.append('image_type', imageType);
-
-        // Add tag values to form data
-        for (const [tagField, tagValue] of Object.entries(tags)) {
-            formData.append(tagField, tagValue);
-        }
-
-        try {
-            const response = await fetch('/api/tokens/upload', {
-                method: 'POST',
-                body: formData
-            });
-
-            const data = await response.json();
-            if (data.success && data.results.added > 0) {
-                addedCount++;
-            }
-        } catch (error) {
-            console.error(`Error uploading ${file.name}:`, error);
-        }
-    }
-
-    // Build success message
-    const messages = [];
-    if (addedCount > 0) messages.push(`${addedCount} uploaded`);
-    if (renamedCount > 0) messages.push(`${renamedCount} renamed`);
-    if (skippedCount > 0) messages.push(`${skippedCount} skipped`);
-
-    if (messages.length > 0) {
-        showSuccess(messages.join(', '));
-    }
-}
-
 // ============================================================================
-// ELECTRON REFERENCE MODE FUNCTIONS
+// REFERENCE MODE FUNCTIONS (Electron-only)
 // ============================================================================
 
 /**
@@ -2351,24 +2178,11 @@ async function handleDrop(e) {
 
         showLoading();
 
-        // STEP 2: Determine mode (reference vs copy)
-        const useReference = shouldUseReferenceMode();
-        let filePaths = null;
-
-        if (useReference) {
-            filePaths = getFilePaths(files);
-            if (!filePaths) {
-                console.warn('Failed to extract paths from drag-drop, using copy mode');
-            }
-        }
+        // STEP 2: Get file paths (Electron required)
+        const filePaths = getFilePaths(files);
 
         // STEP 3: Check for duplicates
-        let duplicateInfo;
-        if (filePaths) {
-            duplicateInfo = await checkForDuplicatesByPath(filePaths.map(fp => fp.path));
-        } else {
-            duplicateInfo = await checkForDuplicates(files);
-        }
+        const duplicateInfo = await checkForDuplicatesByPath(filePaths.map(fp => fp.path));
 
         // STEP 4: Show batch tag modal
         hideLoading();
@@ -2380,7 +2194,7 @@ async function handleDrop(e) {
             hideLoading();
             const userChoices = await showDuplicateConfirmation(
                 duplicateInfo.duplicates,
-                filePaths || files
+                filePaths
             );
 
             if (userChoices === null) {
@@ -2389,18 +2203,9 @@ async function handleDrop(e) {
             }
 
             showLoading();
-
-            if (filePaths) {
-                await addFileReferencesWithChoices(filePaths, userChoices, imageType, tags);
-            } else {
-                await uploadFilesWithChoices(files, userChoices, imageType, tags);
-            }
+            await addFileReferencesWithChoices(filePaths, userChoices, imageType, tags);
         } else {
-            if (filePaths) {
-                await addFileReferencesDirectly(filePaths, imageType, tags);
-            } else {
-                await uploadFilesDirectly(files, imageType, tags);
-            }
+            await addFileReferencesDirectly(filePaths, imageType, tags);
         }
 
         loadTokens();
@@ -3595,293 +3400,6 @@ function showNotification(message, type = 'info') {
     }
 }
 
-let currentDrivePath = [];  // Stack of {id, name} for breadcrumb navigation
-let monitoredFolders = [];
-
-// Open Drive Modal
-document.getElementById('driveBtn')?.addEventListener('click', async () => {
-    const modal = document.getElementById('driveModal');
-    modal.style.display = 'flex';
-
-    // Load Drive status and monitored folders
-    await loadDriveStatus();
-    await loadMonitoredFolders();
-});
-
-// Load Drive Connection Status
-async function loadDriveStatus() {
-    const statusDiv = document.getElementById('driveStatus');
-
-    try {
-        const response = await fetch('/api/drive/status');
-        const data = await response.json();
-
-        if (data.connected) {
-            const user = data.user || {};
-            statusDiv.innerHTML = `
-                <div class="status-connected">
-                    <div class="status-icon">✅</div>
-                    <div class="status-info">
-                        <h4>Connected to Google Drive</h4>
-                        <p>${user.emailAddress || 'Unknown user'}</p>
-                    </div>
-                </div>
-            `;
-
-            // Show monitored folders section
-            document.getElementById('monitoredFoldersSection').style.display = 'block';
-        } else {
-            statusDiv.innerHTML = `
-                <div class="status-disconnected">
-                    <div class="status-icon">❌</div>
-                    <p>Not connected to Google Drive</p>
-                    <small>${data.error || 'Please restart the app to authenticate'}</small>
-                </div>
-            `;
-        }
-    } catch (error) {
-        console.error('Error checking Drive status:', error);
-        statusDiv.innerHTML = `
-            <div class="status-disconnected">
-                <p>Error checking connection status</p>
-            </div>
-        `;
-    }
-}
-
-// Load Monitored Folders
-async function loadMonitoredFolders() {
-    const list = document.getElementById('monitoredFoldersList');
-
-    try {
-        const response = await fetch('/api/drive/folders/monitored');
-        const data = await response.json();
-
-        if (data.success) {
-            monitoredFolders = data.folders || [];
-
-            if (monitoredFolders.length === 0) {
-                list.innerHTML = `
-                    <div class="empty-drive-list">
-                        <div style="font-size: 48px;">📂</div>
-                        <p>No folders are being monitored yet</p>
-                        <p>Click "Add Folder to Sync" to start syncing images from Google Drive</p>
-                    </div>
-                `;
-            } else {
-                list.innerHTML = monitoredFolders.map(folder => `
-                    <div class="monitored-folder-item" data-folder-id="${folder.folder_id}">
-                        <div class="monitored-folder-info">
-                            <div class="monitored-folder-icon">📁</div>
-                            <div class="monitored-folder-details">
-                                <h4>${escapeHtml(folder.folder_name)}</h4>
-                                <p>${folder.folder_path || 'Google Drive'}</p>
-                            </div>
-                        </div>
-                        <div class="monitored-folder-actions">
-                            <button class="btn btn-small btn-danger remove-folder-btn" data-folder-id="${folder.folder_id}">
-                                Remove
-                            </button>
-                        </div>
-                    </div>
-                `).join('');
-
-                // Add remove button listeners
-                document.querySelectorAll('.remove-folder-btn').forEach(btn => {
-                    btn.addEventListener('click', async (e) => {
-                        const folderId = e.target.dataset.folderId;
-                        if (confirm('Stop syncing this folder? Existing images will remain in your vault.')) {
-                            await removeMonitoredFolder(folderId);
-                        }
-                    });
-                });
-            }
-        }
-    } catch (error) {
-        console.error('Error loading monitored folders:', error);
-        list.innerHTML = `<p style="color: #ff6b6b; text-align: center;">Error loading folders</p>`;
-    }
-}
-
-// Remove Monitored Folder
-async function removeMonitoredFolder(folderId) {
-    try {
-        const response = await fetch(`/api/drive/folders/monitor/${folderId}`, {
-            method: 'DELETE'
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-            showNotification('Folder removed from sync', 'success');
-            await loadMonitoredFolders();
-        } else {
-            showNotification(data.error || 'Failed to remove folder', 'error');
-        }
-    } catch (error) {
-        console.error('Error removing folder:', error);
-        showNotification('Error removing folder', 'error');
-    }
-}
-
-// Show Drive Browser
-document.getElementById('addDriveFolderBtn')?.addEventListener('click', () => {
-    document.getElementById('monitoredFoldersSection').style.display = 'none';
-    document.getElementById('driveBrowserSection').style.display = 'block';
-
-    // Start at root
-    currentDrivePath = [{id: 'root', name: 'My Drive'}];
-    loadDriveFolders('root');
-});
-
-// Cancel Browse - Back to Monitored Folders
-document.getElementById('cancelBrowseBtn')?.addEventListener('click', () => {
-    document.getElementById('driveBrowserSection').style.display = 'none';
-    document.getElementById('monitoredFoldersSection').style.display = 'block';
-});
-
-// Load Drive Folders
-async function loadDriveFolders(parentId = 'root') {
-    const list = document.getElementById('driveFoldersList');
-    const breadcrumb = document.getElementById('driveBreadcrumb');
-
-    list.innerHTML = '<div class="status-loading">Loading folders...</div>';
-
-    try {
-        const url = parentId ? `/api/drive/folders?parent_id=${parentId}` : '/api/drive/folders';
-        const response = await fetch(url);
-        const data = await response.json();
-
-        if (data.success) {
-            const folders = data.folders || [];
-
-            // Update breadcrumb
-            breadcrumb.innerHTML = currentDrivePath.map((item, index) => `
-                <button class="breadcrumb-item" data-folder-id="${item.id}" data-index="${index}">
-                    ${escapeHtml(item.name)}
-                </button>
-                ${index < currentDrivePath.length - 1 ? '<span class="breadcrumb-separator">/</span>' : ''}
-            `).join('');
-
-            // Add breadcrumb listeners
-            breadcrumb.querySelectorAll('.breadcrumb-item').forEach(btn => {
-                btn.addEventListener('click', (e) => {
-                    const index = parseInt(e.target.dataset.index);
-                    const folderId = e.target.dataset.folderId;
-
-                    // Trim path to clicked item
-                    currentDrivePath = currentDrivePath.slice(0, index + 1);
-                    loadDriveFolders(folderId);
-                });
-            });
-
-            // Display folders
-            if (folders.length === 0) {
-                list.innerHTML = `
-                    <div class="empty-drive-list">
-                        <p>No subfolders found</p>
-                    </div>
-                `;
-            } else {
-                list.innerHTML = folders.map(folder => {
-                    const isMonitored = monitoredFolders.some(m => m.folder_id === folder.id);
-
-                    return `
-                        <div class="drive-folder-item" data-folder-id="${folder.id}" data-folder-name="${escapeHtml(folder.name)}">
-                            <div class="drive-folder-left">
-                                <div class="drive-folder-icon">📁</div>
-                                <div class="drive-folder-name">${escapeHtml(folder.name)}</div>
-                            </div>
-                            <div class="drive-folder-actions">
-                                ${isMonitored ?
-                                    '<span style="color: var(--primary-color); font-size: 12px;">✓ Syncing</span>' :
-                                    `<button class="btn btn-small btn-primary add-monitor-btn" data-folder-id="${folder.id}" data-folder-name="${escapeHtml(folder.name)}">
-                                        Add to Sync
-                                    </button>`
-                                }
-                            </div>
-                        </div>
-                    `;
-                }).join('');
-
-                // Add folder navigation listeners (click on folder name/icon to browse)
-                list.querySelectorAll('.drive-folder-left').forEach(elem => {
-                    elem.addEventListener('click', (e) => {
-                        const item = e.target.closest('.drive-folder-item');
-                        const folderId = item.dataset.folderId;
-                        const folderName = item.dataset.folderName;
-
-                        currentDrivePath.push({id: folderId, name: folderName});
-                        loadDriveFolders(folderId);
-                    });
-                });
-
-                // Add monitor button listeners
-                list.querySelectorAll('.add-monitor-btn').forEach(btn => {
-                    btn.addEventListener('click', async (e) => {
-                        e.stopPropagation();
-                        const folderId = e.target.dataset.folderId;
-                        const folderName = e.target.dataset.folderName;
-
-                        await addMonitoredFolder(folderId, folderName);
-                    });
-                });
-            }
-        } else {
-            list.innerHTML = `<p style="color: #ff6b6b; text-align: center;">${data.error || 'Error loading folders'}</p>`;
-        }
-    } catch (error) {
-        console.error('Error loading Drive folders:', error);
-        list.innerHTML = `<p style="color: #ff6b6b; text-align: center;">Error loading folders</p>`;
-    }
-}
-
-// Add Monitored Folder
-async function addMonitoredFolder(folderId, folderName) {
-    try {
-        const folderPath = currentDrivePath.map(p => p.name).join(' / ');
-
-        const response = await fetch('/api/drive/folders/monitor', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                folder_id: folderId,
-                folder_name: folderName,
-                folder_path: folderPath
-            })
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-            showNotification(`Folder "${folderName}" added to sync`, 'success');
-
-            // Trigger immediate sync
-            showNotification('Starting sync...', 'info');
-            try {
-                const syncResponse = await fetch('/api/scan', { method: 'POST' });
-                const syncData = await syncResponse.json();
-                if (syncData.success) {
-                    showNotification(`Sync complete: ${syncData.stats?.added || 0} images added`, 'success');
-                }
-            } catch (syncError) {
-                console.error('Error during sync:', syncError);
-                showNotification('Folder added but sync failed. Use the Scan button to sync manually.', 'error');
-            }
-
-            // Reload monitored folders and current view
-            await loadMonitoredFolders();
-            await loadDriveFolders(currentDrivePath[currentDrivePath.length - 1].id);
-        } else {
-            showNotification(data.error || 'Failed to add folder', 'error');
-        }
-    } catch (error) {
-        console.error('Error adding monitored folder:', error);
-        showNotification('Error adding folder', 'error');
-    }
-}
-
-
 // ============================================================================
 // AUDIO FILE MANAGEMENT
 // ============================================================================
@@ -4716,21 +4234,11 @@ async function handleSimpleImageUpload(e) {
     try {
         showNotification('Uploading images...', 'info');
 
-        // Use reference mode if in Electron
-        const useReference = shouldUseReferenceMode();
-        let filePaths = null;
+        // Get file paths (Electron required)
+        const filePaths = getFilePaths(pendingImageUploadFiles);
 
-        if (useReference) {
-            filePaths = getFilePaths(pendingImageUploadFiles);
-        }
-
-        if (filePaths) {
-            // Reference mode: add files by path
-            await addFileReferencesDirectly(filePaths, imageType, tags);
-        } else {
-            // Copy mode: upload files
-            await uploadFilesDirectly(pendingImageUploadFiles, imageType, tags);
-        }
+        // Add files by path (reference mode)
+        await addFileReferencesDirectly(filePaths, imageType, tags);
 
         showNotification(`Upload complete: ${pendingImageUploadFiles.length} images added`);
 
