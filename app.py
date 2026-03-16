@@ -23,7 +23,7 @@ from cache import get_image_cache
 app = Flask(__name__)
 CORS(app)
 
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.1.0"
 
 # Configuration
 CONFIG_FILE = 'config.json'

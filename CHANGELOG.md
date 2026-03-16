@@ -11,6 +11,22 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.1.0] - 2026-03-15
+
+Stability and polish release. All changes are internal improvements with no breaking changes.
+
+### Fixed
+- Electron DevTools panel no longer opens in production builds. Gated on `NODE_ENV=development` or `DEBUG_DEVTOOLS=1` env var. (#4)
+- Electron now reads the port from `config.json` and passes it consistently to both the Flask subprocess and the window URL. Changing the port no longer causes a blank window. (#5)
+- Replaced the fixed 2-second startup delay with a health-check loop that polls `GET /api/version` (up to 6s). App loads as soon as Flask is ready; shows an error dialog if Flask never starts. (#6)
+- Quitting the app now sends `SIGTERM` to Flask with a 3-second grace period before escalating to `SIGKILL`, preventing potential database corruption on close. (#7)
+- Rapid filter or search changes no longer leave stale in-flight requests. Each `loadTokens()` call cancels the previous fetch via `AbortController`. (#9)
+
+### Performance
+- Added composite indexes on `(image_type, species)`, `(image_type, class)`, `(image_type, source)`, `(image_type, campaign)`, and `date_added DESC`. Queries filtering by type and tag now use optimal index paths. Existing databases gain the indexes automatically on next startup. (#12)
+
+---
+
 ## [2.0.0] - 2026-03-15
 
 Major architectural release. Image Vault is now a **Reference Mode only** Electron desktop application. Copy Mode, browser-based upload, and Google Drive sync have been removed to simplify the codebase and sharpen the focus on the desktop experience.
@@ -77,7 +93,8 @@ Initial release of Image Vault as an Electron desktop application wrapping a Fla
 
 ---
 
-[Unreleased]: https://github.com/NerdyToddGerdy/automatic-eureka/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/NerdyToddGerdy/automatic-eureka/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/NerdyToddGerdy/automatic-eureka/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/NerdyToddGerdy/automatic-eureka/compare/v1.1.0...v2.0.0
 [1.1.0]: https://github.com/NerdyToddGerdy/automatic-eureka/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/NerdyToddGerdy/automatic-eureka/releases/tag/v1.0.0
