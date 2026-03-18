@@ -1119,6 +1119,49 @@ textarea.form-input {
     font-weight: 600;
 }
 
+.tag-manager-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 8px;
+}
+
+.tag-manager-table th {
+    text-align: left;
+    padding: 8px 12px;
+    color: var(--gold);
+    border-bottom: 1px solid var(--bg-light);
+    font-size: 0.85em;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.tag-manager-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--bg-light);
+    vertical-align: middle;
+}
+
+.tag-manager-value {
+    color: var(--text-primary);
+}
+
+.tag-manager-count {
+    color: var(--text-secondary);
+    width: 80px;
+}
+
+.tag-rename-form {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 8px 0;
+}
+
+.tag-rename-form .form-input {
+    flex: 1;
+    padding: 6px 10px;
+}
+
 .total-stat {
     font-size: 48px;
     text-align: center;

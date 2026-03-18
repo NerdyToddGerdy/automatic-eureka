@@ -24,6 +24,9 @@
                 <button id="statsBtn" class="btn btn-secondary">
                     <span>📊</span> Stats
                 </button>
+                <button id="manageTagsBtn" class="btn btn-secondary">
+                    <span>🏷️</span> Manage Tags
+                </button>
             </div>
         </header>
 
@@ -298,6 +301,42 @@
                 <h2>Image Vault Statistics</h2>
                 <div id="statsContent" class="stats-content">
                     <!-- Stats will be inserted here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tag Manager Modal -->
+    <div id="tagManagerModal" class="modal" style="display: none;">
+        <div class="modal-overlay"></div>
+        <div class="modal-content modal-wide">
+            <button class="modal-close">&times;</button>
+            <div class="modal-body">
+                <h2>Manage Tags</h2>
+                <p class="modal-subtitle">Rename or merge tag values — changes propagate to all tokens and PNG metadata</p>
+
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <label for="tagManagerField">Tag Field</label>
+                    <select id="tagManagerField" class="form-input">
+                        <option value="species">Species</option>
+                        <option value="class">Class</option>
+                        <option value="source">Source</option>
+                        <option value="campaign">Campaign</option>
+                        <option value="scale">Scale</option>
+                        <option value="theme">Theme</option>
+                        <option value="type">Type</option>
+                        <option value="subject">Subject</option>
+                        <option value="style">Style</option>
+                        <option value="location">Location</option>
+                        <option value="mood">Mood</option>
+                        <option value="rarity">Rarity</option>
+                        <option value="category">Category</option>
+                        <option value="attunement">Attunement</option>
+                    </select>
+                </div>
+
+                <div id="tagManagerList">
+                    <!-- Tag values rendered here -->
                 </div>
             </div>
         </div>

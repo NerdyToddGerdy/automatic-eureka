@@ -695,6 +695,8 @@ function setupEventListeners() {
 
     // Stats button
     document.getElementById('statsBtn').addEventListener('click', showStats);
+    document.getElementById('manageTagsBtn').addEventListener('click', showTagManagerModal);
+    document.getElementById('tagManagerField').addEventListener('change', loadTagManagerValues);
 
     // Search and filters
     searchInput.addEventListener('input', debounce(handleSearchChange, 300));
@@ -1708,6 +1710,118 @@ function renderStatSection(title, data) {
             ${items}
         </div>
     `;
+}
+
+// Tag Manager
+async function showTagManagerModal() {
+    document.getElementById('tagManagerModal').style.display = 'flex';
+    await loadTagManagerValues();
+}
+
+async function loadTagManagerValues() {
+    const field = document.getElementById('tagManagerField').value;
+    const listEl = document.getElementById('tagManagerList');
+    listEl.innerHTML = '<p class="modal-subtitle">Loading...</p>';
+
+    try {
+        const response = await fetch(`/api/tags/${field}/manage`);
+        const data = await response.json();
+
+        if (!data.success || data.values.length === 0) {
+            listEl.innerHTML = '<p class="modal-subtitle">No values found for this field.</p>';
+            return;
+        }
+
+        const rows = data.values.map(({value, count}) => `
+            <tr data-value="${escapeHtml(value)}">
+                <td class="tag-manager-value">${escapeHtml(value)}</td>
+                <td class="tag-manager-count">${count}</td>
+                <td>
+                    <button class="btn btn-small tag-rename-btn" data-value="${escapeHtml(value)}">Rename</button>
+                </td>
+            </tr>
+            <tr class="tag-rename-row" data-for="${escapeHtml(value)}" style="display:none;">
+                <td colspan="3">
+                    <div class="tag-rename-form">
+                        <input type="text" class="form-input tag-rename-input" value="${escapeHtml(value)}" placeholder="New value" />
+                        <button class="btn btn-primary btn-small tag-rename-save" data-old="${escapeHtml(value)}">Save</button>
+                        <button class="btn btn-secondary btn-small tag-rename-cancel">Cancel</button>
+                    </div>
+                </td>
+            </tr>
+        `).join('');
+
+        listEl.innerHTML = `
+            <table class="tag-manager-table">
+                <thead>
+                    <tr>
+                        <th>Value</th>
+                        <th>Tokens</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>
+        `;
+
+        listEl.querySelectorAll('.tag-rename-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const renameRow = listEl.querySelector(`.tag-rename-row[data-for="${btn.dataset.value}"]`);
+                renameRow.style.display = renameRow.style.display === 'none' ? '' : 'none';
+            });
+        });
+
+        listEl.querySelectorAll('.tag-rename-cancel').forEach(btn => {
+            btn.addEventListener('click', () => {
+                btn.closest('.tag-rename-row').style.display = 'none';
+            });
+        });
+
+        listEl.querySelectorAll('.tag-rename-save').forEach(btn => {
+            btn.addEventListener('click', () => executeTagRename(btn));
+        });
+
+    } catch (error) {
+        listEl.innerHTML = `<p class="modal-subtitle">Error loading tags: ${error.message}</p>`;
+    }
+}
+
+async function executeTagRename(btn) {
+    const field = document.getElementById('tagManagerField').value;
+    const oldVal = btn.dataset.old;
+    const newVal = btn.closest('.tag-rename-form').querySelector('.tag-rename-input').value.trim();
+
+    if (!newVal) { showError('New value cannot be empty'); return; }
+    if (newVal === oldVal) { showError('New value is the same as the old value'); return; }
+
+    btn.disabled = true;
+    btn.textContent = 'Saving...';
+
+    try {
+        const response = await fetch(`/api/tags/${field}/rename`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ from: oldVal, to: newVal })
+        });
+        const data = await response.json();
+
+        if (data.success) {
+            const s = data.updated !== 1 ? 's' : '';
+            showSuccess(`Renamed "${oldVal}" → "${newVal}" on ${data.updated} token${s}`);
+            if (data.errors > 0) showError(`${data.errors} PNG file(s) could not be updated`);
+            await loadTagManagerValues();
+            loadFilterOptions();
+            loadTokens();
+        } else {
+            showError(data.error || 'Failed to rename tag');
+            btn.disabled = false;
+            btn.textContent = 'Save';
+        }
+    } catch (error) {
+        showError('Error: ' + error.message);
+        btn.disabled = false;
+        btn.textContent = 'Save';
+    }
 }
 
 // Handle search change

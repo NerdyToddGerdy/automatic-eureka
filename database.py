@@ -616,6 +616,48 @@ class TokenDatabase:
             print(f"Error getting tag values by type: {e}")
             return []
 
+    def get_tag_value_counts(self, field: str) -> List[Dict]:
+        """Get all unique tag values with token counts for a given field."""
+        valid_fields = ['species', 'class', 'source', 'campaign', 'scale', 'theme',
+                        'type', 'subject', 'style', 'location', 'mood', 'rarity', 'category', 'attunement']
+        if field not in valid_fields:
+            return []
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(f'''
+                    SELECT {field}, COUNT(*) as count FROM tokens
+                    WHERE {field} IS NOT NULL AND {field} != ''
+                    GROUP BY {field}
+                    ORDER BY count DESC, {field} ASC
+                ''')
+                return [{'value': row[0], 'count': row[1]} for row in cursor.fetchall()]
+        except Exception as e:
+            print(f"Error getting tag value counts: {e}")
+            return []
+
+    def rename_tag_value(self, field: str, old_val: str, new_val: str) -> List[Dict]:
+        """Rename a tag value in the database and return affected token dicts for PNG rewriting."""
+        valid_fields = ['species', 'class', 'source', 'campaign', 'scale', 'theme',
+                        'type', 'subject', 'style', 'location', 'mood', 'rarity', 'category', 'attunement']
+        if field not in valid_fields:
+            return []
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(f'''
+                    SELECT id, filepath FROM tokens WHERE {field} = ?
+                ''', (old_val,))
+                affected = [{'id': row[0], 'filepath': row[1]} for row in cursor.fetchall()]
+                cursor.execute(f'''
+                    UPDATE tokens SET {field} = ? WHERE {field} = ?
+                ''', (new_val, old_val))
+                conn.commit()
+                return affected
+        except Exception as e:
+            print(f"Error renaming tag value: {e}")
+            return []
+
     def parse_multivalue_field(self, value):
         """Parse comma-separated values into a list."""
         if not value:

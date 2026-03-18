@@ -1117,6 +1117,69 @@ def get_tags_by_type(image_type, tag_type):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/tags/<field>/manage', methods=['GET'])
+def get_tag_manage(field):
+    """Get tag values with token counts for the tag manager."""
+    try:
+        valid_fields = ['species', 'class', 'source', 'campaign', 'scale', 'theme',
+                        'type', 'subject', 'style', 'location', 'mood', 'rarity', 'category', 'attunement']
+        if field not in valid_fields:
+            return jsonify({'success': False, 'error': 'Invalid field'}), 400
+        values = db.get_tag_value_counts(field)
+        return jsonify({'success': True, 'values': values})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/tags/<field>/rename', methods=['PUT'])
+def rename_tag_value(field):
+    """Rename a tag value across all tokens (DB + PNG metadata)."""
+    try:
+        valid_fields = ['species', 'class', 'source', 'campaign', 'scale', 'theme',
+                        'type', 'subject', 'style', 'location', 'mood', 'rarity', 'category', 'attunement']
+        if field not in valid_fields:
+            return jsonify({'success': False, 'error': 'Invalid field'}), 400
+
+        data = request.get_json()
+        old_val = data.get('from', '').strip()
+        new_val = data.get('to', '').strip()
+
+        if not old_val or not new_val:
+            return jsonify({'success': False, 'error': 'Both "from" and "to" values are required'}), 400
+        if old_val == new_val:
+            return jsonify({'success': False, 'error': 'Values are identical'}), 400
+
+        affected = db.rename_tag_value(field, old_val, new_val)
+
+        field_to_meta = {
+            'species': 'Species', 'class': 'Class', 'source': 'Source',
+            'campaign': 'Campaign', 'scale': 'Scale', 'theme': 'Theme',
+            'type': 'Type', 'subject': 'Subject', 'style': 'Style',
+            'location': 'Location', 'mood': 'Mood', 'rarity': 'Rarity',
+            'category': 'Category', 'attunement': 'Attunement'
+        }
+        meta_key = field_to_meta[field]
+
+        updated = 0
+        failures = []
+        for token in affected:
+            filepath = token['filepath']
+            try:
+                if os.path.exists(filepath):
+                    current = TokenMetadata.read_token_metadata(filepath)
+                    current[meta_key] = new_val
+                    TokenMetadata.write_token_metadata(filepath, current)
+                updated += 1
+            except Exception as e:
+                app.logger.error(f"Failed to rewrite PNG {filepath}: {e}")
+                failures.append(filepath)
+
+        return jsonify({'success': True, 'updated': updated, 'errors': len(failures), 'failures': failures})
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/scan', methods=['POST'])
 def rescan():
     """Manually trigger a folder scan (local or Drive)."""
