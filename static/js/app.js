@@ -843,11 +843,36 @@ async function loadFilterOptions() {
                         // Update existing filter options
                         filterMultiSelects[filter.name].setOptions(data.values || []);
                     }
+
+                    // Populate datalist for bulk edit autocomplete
+                    const datalist = document.getElementById(`${filter.name}List`);
+                    if (datalist) {
+                        datalist.innerHTML = '';
+                        (data.values || []).forEach(value => {
+                            const opt = document.createElement('option');
+                            opt.value = value;
+                            datalist.appendChild(opt);
+                        });
+                    }
                 }
             } else {
                 // Clear filter values when hidden
                 if (filterMultiSelects[filter.name]) {
                     filterMultiSelects[filter.name].clearValues();
+                }
+
+                // Still populate datalist for bulk edit autocomplete even when filter is hidden
+                const datalist = document.getElementById(`${filter.name}List`);
+                if (datalist && datalist.options.length === 0) {
+                    const response = await fetch(`/api/tags/${filter.name}`);
+                    const data = await response.json();
+                    if (data.success) {
+                        (data.values || []).forEach(value => {
+                            const opt = document.createElement('option');
+                            opt.value = value;
+                            datalist.appendChild(opt);
+                        });
+                    }
                 }
             }
         }
@@ -1280,6 +1305,7 @@ function showBulkEditModal() {
         return;
     }
 
+    document.getElementById('bulkImageType').value = '';
     document.getElementById('bulkSpecies').value = '';
     document.getElementById('bulkClass').value = '';
     document.getElementById('bulkSource').value = '';
@@ -1294,11 +1320,13 @@ async function handleBulkUpdate(e) {
 
     const updates = {};
 
+    const imageType = document.getElementById('bulkImageType').value;
     const species = document.getElementById('bulkSpecies').value;
     const tokenClass = document.getElementById('bulkClass').value;
     const source = document.getElementById('bulkSource').value;
     const campaign = document.getElementById('bulkCampaign').value;
 
+    if (imageType) updates.ImageType = imageType;
     if (species) updates.Species = species;
     if (tokenClass) updates.Class = tokenClass;
     if (source) updates.Source = source;

@@ -246,6 +246,20 @@
 
                 <form id="bulkEditForm" class="token-form">
                     <div class="form-group">
+                        <label for="bulkImageType">Image Type</label>
+                        <select id="bulkImageType" class="form-input">
+                            <option value="">— no change —</option>
+                            <option value="Token">Token</option>
+                            <option value="Map">Map</option>
+                            <option value="Handout">Handout</option>
+                            <option value="Portrait">Portrait</option>
+                            <option value="Scene">Scene</option>
+                            <option value="Item">Item</option>
+                        </select>
+                        <p class="modal-subtitle" style="margin-top: 4px; font-size: 0.8em;">Changing image type may make existing type-specific tags (e.g. Species, Class) irrelevant.</p>
+                    </div>
+
+                    <div class="form-group">
                         <label for="bulkSpecies">Species</label>
                         <input type="text" id="bulkSpecies" class="form-input" list="speciesList" placeholder="Leave empty to skip" />
                     </div>
@@ -908,5 +922,11 @@
     </button>
 
     <script src="/static/js/app.js"></script>
+    <!-- Datalists for bulk edit autocomplete -->
+    <datalist id="speciesList"></datalist>
+    <datalist id="classList"></datalist>
+    <datalist id="sourceList"></datalist>
+    <datalist id="campaignList"></datalist>
+
 </body>
 </html>
