@@ -1922,12 +1922,12 @@ function hideLoading() {
 
 // Show success message
 function showSuccess(message) {
-    alert(message); // Simple alert for now - could be replaced with toast notifications
+    showNotification(message, 'success');
 }
 
 // Show error message
 function showError(message) {
-    alert('Error: ' + message);
+    showNotification(message, 'error');
 }
 
 // Format date
@@ -3538,16 +3538,40 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-// Helper function to show notifications
+// Toast notification durations and icons by type
+const TOAST_DURATIONS = { success: 4000, info: 4000, error: 6000 };
+const TOAST_ICONS = { success: '✓', error: '⚠' };
+
+// Show a toast notification (type: 'success' | 'error' | 'info')
 function showNotification(message, type = 'info') {
-    // Simple alert for now - could be enhanced with toast notifications later
-    if (type === 'error') {
-        alert('Error: ' + message);
-    } else if (type === 'success') {
-        alert('✓ ' + message);
-    } else {
+    const container = document.getElementById('toastContainer');
+    if (!container) {
         alert(message);
+        return;
     }
+
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
+
+    const icon = TOAST_ICONS[type];
+    toast.innerHTML = `
+        ${icon ? `<span class="toast-icon" aria-hidden="true">${icon}</span>` : ''}
+        <span class="toast-message"></span>
+        <button type="button" class="toast-close" aria-label="Dismiss notification">&times;</button>
+    `;
+    toast.querySelector('.toast-message').textContent = message;
+
+    const dismiss = () => {
+        if (toast.dataset.dismissed) return;
+        toast.dataset.dismissed = 'true';
+        toast.classList.add('toast-leaving');
+        setTimeout(() => toast.remove(), 200);
+    };
+
+    toast.querySelector('.toast-close').addEventListener('click', dismiss);
+    container.appendChild(toast);
+    setTimeout(dismiss, TOAST_DURATIONS[type] || TOAST_DURATIONS.info);
 }
 
 // ============================================================================
