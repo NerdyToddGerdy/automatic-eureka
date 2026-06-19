@@ -8,9 +8,9 @@ from .page_objects.main_page import MainPage
 class TestGalleryViews:
     """Tests for gallery view switching functionality."""
 
-    def test_switch_to_list_view(self, chrome_driver, base_url, populated_test_db):
+    def test_switch_to_list_view(self, page, app_url, populated_test_db):
         """Should switch from grid view to list view."""
-        main_page = MainPage(chrome_driver, base_url)
+        main_page = MainPage(page, app_url)
 
         # Navigate to app
         main_page.open()
@@ -33,9 +33,9 @@ class TestGalleryViews:
         cards = main_page.get_token_cards()
         assert len(cards) == 5
 
-    def test_switch_to_grid_view(self, chrome_driver, base_url, populated_test_db):
+    def test_switch_to_grid_view(self, page, app_url, populated_test_db):
         """Should switch from list view to grid view."""
-        main_page = MainPage(chrome_driver, base_url)
+        main_page = MainPage(page, app_url)
 
         # Navigate to app
         main_page.open()
@@ -57,16 +57,16 @@ class TestGalleryViews:
         cards = main_page.get_token_cards()
         assert len(cards) == 5
 
-    def test_token_count_updates(self, chrome_driver, base_url, populated_test_db):
+    def test_token_count_updates(self, page, app_url, populated_test_db):
         """Should maintain correct token count when switching views."""
-        main_page = MainPage(chrome_driver, base_url)
+        main_page = MainPage(page, app_url)
 
         # Navigate to app
         main_page.open()
 
         # Check initial count in grid view
         count_grid = main_page.get_token_count()
-        assert "5 tokens" in count_grid
+        assert "5 images" in count_grid
 
         # Switch to list view
         main_page.switch_to_list_view()
@@ -82,7 +82,7 @@ class TestGalleryViews:
 
         # Count should update (3 tokens)
         count_filtered = main_page.get_token_count()
-        assert "3 tokens" in count_filtered
+        assert "3 images" in count_filtered
 
         # Switch back to grid view
         main_page.switch_to_grid_view()
@@ -91,4 +91,4 @@ class TestGalleryViews:
         # Filter should persist and count should remain the same
         count_grid_filtered = main_page.get_token_count()
         assert count_grid_filtered == count_filtered
-        assert "3 tokens" in count_grid_filtered
+        assert "3 images" in count_grid_filtered

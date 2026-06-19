@@ -150,36 +150,12 @@ def client(flask_app):
 # ============================================================================
 
 @pytest.fixture(scope="function")
-def chrome_driver():
-    """Create Chrome WebDriver instance for E2E testing."""
-    from selenium import webdriver
-    from webdriver_manager.chrome import ChromeDriverManager
-    from selenium.webdriver.chrome.service import Service
-
-    options = webdriver.ChromeOptions()
-    # Check environment variable for headless mode (default: headless)
-    if os.getenv('HEADLESS', '1') == '1':
-        options.add_argument('--headless')
-    options.add_argument('--window-size=1920,1080')
-    options.add_argument('--disable-gpu')
-    options.add_argument('--no-sandbox')  # Required for some CI environments
-
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=options)
-    driver.implicitly_wait(10)  # Wait up to 10 seconds for elements
-
-    yield driver
-
-    # Cleanup
-    driver.quit()
-
-
-@pytest.fixture(scope="function")
 def test_server(test_db, temp_dir):
     """Start Flask test server on port 5001 for E2E testing."""
     import subprocess
     import time
     import signal
+    import socket
     import sys
 
     # Get path to app.py
@@ -199,8 +175,17 @@ def test_server(test_db, temp_dir):
         stderr=subprocess.PIPE
     )
 
-    # Wait for server to start (check if port is available)
-    time.sleep(3)
+    # Poll until the server accepts connections (up to 30s)
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        try:
+            with socket.create_connection(('127.0.0.1', 5001), timeout=0.5):
+                break
+        except OSError:
+            time.sleep(0.2)
+    else:
+        proc.kill()
+        raise RuntimeError("Test server failed to start within 30 seconds")
 
     yield "http://127.0.0.1:5001"
 
@@ -210,7 +195,7 @@ def test_server(test_db, temp_dir):
 
 
 @pytest.fixture
-def base_url(test_server):
+def app_url(test_server):
     """Provide base URL for tests."""
     return test_server
 

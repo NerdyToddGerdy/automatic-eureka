@@ -9,9 +9,9 @@ from .page_objects.token_modal import BulkEditModal
 class TestBulkOperations:
     """Tests for bulk operations functionality."""
 
-    def test_select_multiple_tokens(self, chrome_driver, base_url, populated_test_db):
+    def test_select_multiple_tokens(self, page, app_url, populated_test_db):
         """Should allow selecting multiple tokens via checkboxes."""
-        main_page = MainPage(chrome_driver, base_url)
+        main_page = MainPage(page, app_url)
 
         # Navigate to app
         main_page.open()
@@ -34,10 +34,10 @@ class TestBulkOperations:
         main_page.select_token_checkbox(2)
         assert main_page.get_selected_count() == 3
 
-    def test_bulk_edit_tags(self, chrome_driver, base_url, populated_test_db):
+    def test_bulk_edit_tags(self, page, app_url, populated_test_db):
         """Should apply tag changes to all selected tokens."""
-        main_page = MainPage(chrome_driver, base_url)
-        bulk_edit_modal = BulkEditModal(chrome_driver, base_url)
+        main_page = MainPage(page, app_url)
+        bulk_edit_modal = BulkEditModal(page, app_url)
 
         # Navigate to app
         main_page.open()
@@ -77,9 +77,9 @@ class TestBulkOperations:
             assert token['species'] == "Halfling"
             assert token['source'] == "Custom Campaign"
 
-    def test_bulk_delete(self, chrome_driver, base_url, populated_test_db):
+    def test_bulk_delete(self, page, app_url, populated_test_db):
         """Should delete all selected tokens."""
-        main_page = MainPage(chrome_driver, base_url)
+        main_page = MainPage(page, app_url)
 
         # Navigate to app
         main_page.open()
@@ -114,9 +114,9 @@ class TestBulkOperations:
             token = populated_test_db.get_token(token_id)
             assert token is None
 
-    def test_deselect_all(self, chrome_driver, base_url, populated_test_db):
+    def test_deselect_all(self, page, app_url, populated_test_db):
         """Should deselect all selected tokens."""
-        main_page = MainPage(chrome_driver, base_url)
+        main_page = MainPage(page, app_url)
 
         # Navigate to app
         main_page.open()

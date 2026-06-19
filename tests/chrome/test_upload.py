@@ -1,26 +1,36 @@
 """
 Chrome E2E tests for file upload functionality.
+
+NOTE: Browser-mode file upload (/api/tokens/upload) is disabled in the current
+app version. These tests require the reference-mode upload flow (Electron only)
+and are marked xfail until a browser-compatible upload path is restored.
 """
 import os
 import pytest
 from .page_objects.main_page import MainPage
 from .page_objects.upload_modal import UploadModal
 
+_UPLOAD_REASON = (
+    "Browser upload endpoint (/api/tokens/upload) is disabled; "
+    "app now requires Electron reference mode for uploads."
+)
+
 
 class TestFileUpload:
     """Tests for file upload functionality."""
 
-    def test_upload_single_png(self, chrome_driver, base_url, sample_png_path, test_db):
+    @pytest.mark.xfail(reason=_UPLOAD_REASON, strict=False)
+    def test_upload_single_png(self, page, app_url, sample_png_path, test_db):
         """Should successfully upload a single PNG file."""
-        main_page = MainPage(chrome_driver, base_url)
-        upload_modal = UploadModal(chrome_driver, base_url)
+        main_page = MainPage(page, app_url)
+        upload_modal = UploadModal(page, app_url)
 
         # Navigate to the app
         main_page.open()
 
         # Initial state - should be empty
         assert main_page.is_gallery_empty()
-        assert "0 tokens" in main_page.get_token_count()
+        assert "0 images" in main_page.get_token_count()
 
         # Click upload button and upload file
         main_page.click_upload_button()
@@ -30,7 +40,7 @@ class TestFileUpload:
         main_page.wait_for_loading_complete()
 
         # Verify token appears in gallery
-        assert "1 token" in main_page.get_token_count()
+        assert "1 image" in main_page.get_token_count()
         assert not main_page.is_gallery_empty()
 
         # Verify in database
@@ -39,10 +49,11 @@ class TestFileUpload:
         assert tokens[0]['filename'] == os.path.basename(sample_png_path)
         assert tokens[0]['image_type'] == 'Token'
 
-    def test_upload_single_jpeg(self, chrome_driver, base_url, sample_jpeg_path, test_db):
+    @pytest.mark.xfail(reason=_UPLOAD_REASON, strict=False)
+    def test_upload_single_jpeg(self, page, app_url, sample_jpeg_path, test_db):
         """Should successfully upload a single JPEG file."""
-        main_page = MainPage(chrome_driver, base_url)
-        upload_modal = UploadModal(chrome_driver, base_url)
+        main_page = MainPage(page, app_url)
+        upload_modal = UploadModal(page, app_url)
 
         # Navigate to the app
         main_page.open()
@@ -55,7 +66,7 @@ class TestFileUpload:
         main_page.wait_for_loading_complete()
 
         # Verify token appears
-        assert "1 token" in main_page.get_token_count()
+        assert "1 image" in main_page.get_token_count()
 
         # Verify in database
         tokens = test_db.get_all_tokens()
@@ -63,10 +74,11 @@ class TestFileUpload:
         assert tokens[0]['filename'] == os.path.basename(sample_jpeg_path)
         assert tokens[0]['image_type'] == 'Portrait'
 
-    def test_upload_with_image_type_selection(self, chrome_driver, base_url, sample_png_path, test_db):
+    @pytest.mark.xfail(reason=_UPLOAD_REASON, strict=False)
+    def test_upload_with_image_type_selection(self, page, app_url, sample_png_path, test_db):
         """Should allow selecting different image types during upload."""
-        main_page = MainPage(chrome_driver, base_url)
-        upload_modal = UploadModal(chrome_driver, base_url)
+        main_page = MainPage(page, app_url)
+        upload_modal = UploadModal(page, app_url)
 
         # Navigate to the app
         main_page.open()
@@ -91,10 +103,11 @@ class TestFileUpload:
         assert len(tokens) == 1
         assert tokens[0]['image_type'] == 'Map'
 
-    def test_upload_multiple_files(self, chrome_driver, base_url, multiple_sample_images, test_db):
+    @pytest.mark.xfail(reason=_UPLOAD_REASON, strict=False)
+    def test_upload_multiple_files(self, page, app_url, multiple_sample_images, test_db):
         """Should allow uploading multiple files at once."""
-        main_page = MainPage(chrome_driver, base_url)
-        upload_modal = UploadModal(chrome_driver, base_url)
+        main_page = MainPage(page, app_url)
+        upload_modal = UploadModal(page, app_url)
 
         # Navigate to the app
         main_page.open()
@@ -108,7 +121,7 @@ class TestFileUpload:
 
         # Verify all files uploaded
         expected_count = len(multiple_sample_images)
-        assert f"{expected_count} tokens" in main_page.get_token_count()
+        assert f"{expected_count} images" in main_page.get_token_count()
 
         # Verify in database
         tokens = test_db.get_all_tokens()

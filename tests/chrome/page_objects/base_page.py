@@ -2,248 +2,146 @@
 Base Page Object class with common utilities for all page objects.
 """
 import os
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import Select
-from selenium.common.exceptions import TimeoutException
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+
+class By:
+    """CSS selector type constants, compatible with Selenium's By class."""
+    ID = "id"
+    CLASS_NAME = "class name"
+    CSS_SELECTOR = "css selector"
+    NAME = "name"
+    TAG_NAME = "tag name"
+    XPATH = "xpath"
 
 
 class BasePage:
     """Base class for all page objects with common utilities."""
 
-    def __init__(self, driver, base_url):
-        """
-        Initialize the page object.
-
-        Args:
-            driver: Selenium WebDriver instance
-            base_url: Base URL for the application
-        """
-        self.driver = driver
+    def __init__(self, page, base_url):
+        self.page = page
         self.base_url = base_url
-        self.wait = WebDriverWait(driver, 10)
+        # Auto-accept browser confirm/alert dialogs (used by delete confirmations)
+        page.on("dialog", lambda dialog: dialog.accept())
+
+    @staticmethod
+    def _to_css(locator):
+        """Convert a (By.TYPE, selector) tuple to a CSS selector string."""
+        by_type, value = locator
+        if by_type == "id":
+            return f"#{value}"
+        elif by_type == "class name":
+            return f".{value}"
+        elif by_type == "css selector":
+            return value
+        elif by_type == "name":
+            return f'[name="{value}"]'
+        elif by_type == "tag name":
+            return value
+        elif by_type == "xpath":
+            return f"xpath={value}"
+        return value
 
     def navigate(self, path="/"):
         """Navigate to a specific path."""
-        url = f"{self.base_url}{path}"
-        self.driver.get(url)
+        self.page.goto(f"{self.base_url}{path}")
 
     def wait_for_element(self, locator, timeout=10):
-        """
-        Wait for an element to be present and visible.
-
-        Args:
-            locator: Tuple of (By.*, "selector")
-            timeout: Maximum wait time in seconds
-
-        Returns:
-            WebElement when found
-
-        Raises:
-            TimeoutException if element not found
-        """
-        wait = WebDriverWait(self.driver, timeout)
-        return wait.until(EC.visibility_of_element_located(locator))
+        """Wait for an element to be visible and return its Locator."""
+        sel = self._to_css(locator)
+        loc = self.page.locator(sel)
+        loc.wait_for(state='visible', timeout=timeout * 1000)
+        return loc
 
     def wait_for_element_clickable(self, locator, timeout=10):
-        """
-        Wait for an element to be clickable.
-
-        Args:
-            locator: Tuple of (By.*, "selector")
-            timeout: Maximum wait time in seconds
-
-        Returns:
-            WebElement when clickable
-        """
-        wait = WebDriverWait(self.driver, timeout)
-        return wait.until(EC.element_to_be_clickable(locator))
+        """Wait for an element to be visible (Playwright auto-waits for clickability)."""
+        sel = self._to_css(locator)
+        loc = self.page.locator(sel)
+        loc.wait_for(state='visible', timeout=timeout * 1000)
+        return loc
 
     def wait_for_element_hidden(self, locator, timeout=10):
-        """
-        Wait for an element to be hidden/invisible.
-
-        Args:
-            locator: Tuple of (By.*, "selector")
-            timeout: Maximum wait time in seconds
-
-        Returns:
-            True when element is hidden
-        """
-        wait = WebDriverWait(self.driver, timeout)
-        return wait.until(EC.invisibility_of_element_located(locator))
+        """Wait for an element to be hidden/invisible."""
+        sel = self._to_css(locator)
+        self.page.locator(sel).wait_for(state='hidden', timeout=timeout * 1000)
+        return True
 
     def click(self, locator):
-        """
-        Click an element after waiting for it to be clickable.
-
-        Args:
-            locator: Tuple of (By.*, "selector")
-        """
-        element = self.wait_for_element_clickable(locator)
-        element.click()
+        """Click an element (auto-waits for actionability)."""
+        sel = self._to_css(locator)
+        self.page.locator(sel).click()
 
     def type_text(self, locator, text, clear_first=True):
-        """
-        Type text into an input field.
-
-        Args:
-            locator: Tuple of (By.*, "selector")
-            text: Text to type
-            clear_first: Whether to clear the field first (default: True)
-        """
-        element = self.wait_for_element(locator)
+        """Type text into an input field."""
+        sel = self._to_css(locator)
+        loc = self.page.locator(sel)
         if clear_first:
-            element.clear()
-        element.send_keys(text)
+            loc.fill(text)
+        else:
+            loc.press_sequentially(text)
 
     def get_text(self, locator):
-        """
-        Get text content of an element.
-
-        Args:
-            locator: Tuple of (By.*, "selector")
-
-        Returns:
-            Text content of the element
-        """
-        element = self.wait_for_element(locator)
-        return element.text
+        """Get the inner text of an element."""
+        sel = self._to_css(locator)
+        return self.page.locator(sel).inner_text()
 
     def select_dropdown(self, locator, visible_text):
-        """
-        Select an option from a dropdown by visible text.
-
-        Args:
-            locator: Tuple of (By.*, "selector")
-            visible_text: The visible text of the option to select
-        """
-        element = self.wait_for_element(locator)
-        select = Select(element)
-        select.select_by_visible_text(visible_text)
+        """Select an option from a dropdown by visible text."""
+        sel = self._to_css(locator)
+        self.page.locator(sel).select_option(label=visible_text)
 
     def select_dropdown_by_value(self, locator, value):
-        """
-        Select an option from a dropdown by value attribute.
-
-        Args:
-            locator: Tuple of (By.*, "selector")
-            value: The value attribute of the option to select
-        """
-        element = self.wait_for_element(locator)
-        select = Select(element)
-        select.select_by_value(value)
+        """Select an option from a dropdown by value attribute."""
+        sel = self._to_css(locator)
+        self.page.locator(sel).select_option(value=value)
 
     def is_element_visible(self, locator, timeout=2):
-        """
-        Check if an element is visible.
-
-        Args:
-            locator: Tuple of (By.*, "selector")
-            timeout: Maximum wait time in seconds
-
-        Returns:
-            True if element is visible, False otherwise
-        """
+        """Check if an element is visible."""
+        sel = self._to_css(locator)
         try:
-            wait = WebDriverWait(self.driver, timeout)
-            wait.until(EC.visibility_of_element_located(locator))
+            self.page.locator(sel).wait_for(state='visible', timeout=timeout * 1000)
             return True
-        except TimeoutException:
+        except PlaywrightTimeoutError:
             return False
 
     def is_element_present(self, locator, timeout=2):
-        """
-        Check if an element is present in the DOM (may not be visible).
-
-        Args:
-            locator: Tuple of (By.*, "selector")
-            timeout: Maximum wait time in seconds
-
-        Returns:
-            True if element is present, False otherwise
-        """
+        """Check if an element is present in the DOM (may not be visible)."""
+        sel = self._to_css(locator)
         try:
-            wait = WebDriverWait(self.driver, timeout)
-            wait.until(EC.presence_of_element_located(locator))
+            self.page.locator(sel).wait_for(state='attached', timeout=timeout * 1000)
             return True
-        except TimeoutException:
+        except PlaywrightTimeoutError:
             return False
 
     def find_elements(self, locator):
-        """
-        Find multiple elements matching the locator.
-
-        Args:
-            locator: Tuple of (By.*, "selector")
-
-        Returns:
-            List of WebElements
-        """
-        return self.driver.find_elements(*locator)
+        """Find all elements matching the locator and return a list of Locators."""
+        sel = self._to_css(locator)
+        return self.page.locator(sel).all()
 
     def wait_for_text_in_element(self, locator, text, timeout=10):
-        """
-        Wait for specific text to appear in an element.
-
-        Args:
-            locator: Tuple of (By.*, "selector")
-            text: Text to wait for
-            timeout: Maximum wait time in seconds
-
-        Returns:
-            True when text appears
-        """
-        wait = WebDriverWait(self.driver, timeout)
-        return wait.until(EC.text_to_be_present_in_element(locator, text))
+        """Wait for specific text to appear in an element."""
+        sel = self._to_css(locator)
+        self.page.locator(sel).filter(has_text=text).wait_for(state='visible', timeout=timeout * 1000)
+        return True
 
     def take_screenshot(self, name="screenshot"):
-        """
-        Take a screenshot and save it to the screenshots directory.
-
-        Args:
-            name: Name for the screenshot file (without extension)
-
-        Returns:
-            Path to the saved screenshot
-        """
+        """Take a screenshot and save it to the screenshots directory."""
         screenshots_dir = os.path.join(os.path.dirname(__file__), '..', 'screenshots')
         os.makedirs(screenshots_dir, exist_ok=True)
-
         filepath = os.path.join(screenshots_dir, f"{name}.png")
-        self.driver.save_screenshot(filepath)
+        self.page.screenshot(path=filepath)
         return filepath
 
     def scroll_to_element(self, locator):
-        """
-        Scroll to make an element visible in the viewport.
-
-        Args:
-            locator: Tuple of (By.*, "selector")
-        """
-        element = self.wait_for_element(locator)
-        self.driver.execute_script("arguments[0].scrollIntoView(true);", element)
+        """Scroll to make an element visible in the viewport."""
+        sel = self._to_css(locator)
+        self.page.locator(sel).scroll_into_view_if_needed()
 
     def get_attribute(self, locator, attribute):
-        """
-        Get an attribute value from an element.
-
-        Args:
-            locator: Tuple of (By.*, "selector")
-            attribute: Name of the attribute to get
-
-        Returns:
-            Attribute value
-        """
-        element = self.wait_for_element(locator)
-        return element.get_attribute(attribute)
+        """Get an attribute value from an element."""
+        sel = self._to_css(locator)
+        return self.page.locator(sel).get_attribute(attribute)
 
     def wait_for_page_load(self, timeout=10):
-        """
-        Wait for the page to finish loading.
-
-        Args:
-            timeout: Maximum wait time in seconds
-        """
-        wait = WebDriverWait(self.driver, timeout)
-        wait.until(lambda driver: driver.execute_script("return document.readyState") == "complete")
+        """Wait for the page to finish loading."""
+        self.page.wait_for_load_state('load', timeout=timeout * 1000)

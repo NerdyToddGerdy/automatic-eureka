@@ -148,7 +148,7 @@ def initialize_app():
     load_config()
 
     # Initialize database
-    db = TokenDatabase('tokens.db')
+    db = TokenDatabase(os.environ.get('DB_PATH', 'tokens.db'))
 
     # Initialize Google Drive client if OAuth tokens available
     oauth_tokens_json = os.environ.get('GOOGLE_OAUTH_TOKENS')

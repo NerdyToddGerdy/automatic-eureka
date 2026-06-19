@@ -10,10 +10,10 @@ from .page_objects.token_modal import TokenModal
 class TestTokenEdit:
     """Tests for token editing (CRUD) functionality."""
 
-    def test_open_token_modal(self, chrome_driver, base_url, populated_test_db):
+    def test_open_token_modal(self, page, app_url, populated_test_db):
         """Should open token detail modal when clicking a token card."""
-        main_page = MainPage(chrome_driver, base_url)
-        token_modal = TokenModal(chrome_driver, base_url)
+        main_page = MainPage(page, app_url)
+        token_modal = TokenModal(page, app_url)
 
         # Navigate to app
         main_page.open()
@@ -29,10 +29,10 @@ class TestTokenEdit:
         filename = token_modal.get_filename()
         assert filename != ""
 
-    def test_edit_token_name(self, chrome_driver, base_url, populated_test_db):
+    def test_edit_token_name(self, page, app_url, populated_test_db):
         """Should update token display name and save changes."""
-        main_page = MainPage(chrome_driver, base_url)
-        token_modal = TokenModal(chrome_driver, base_url)
+        main_page = MainPage(page, app_url)
+        token_modal = TokenModal(page, app_url)
 
         # Navigate and open token
         main_page.open()
@@ -57,14 +57,14 @@ class TestTokenEdit:
         assert token['name'] == new_name
 
         # API verification
-        response = requests.get(f"{base_url}/api/tokens/{token_id}")
+        response = requests.get(f"{app_url}/api/tokens/{token_id}")
         assert response.status_code == 200
-        assert response.json()['name'] == new_name
+        assert response.json()['token']['name'] == new_name
 
-    def test_edit_token_species(self, chrome_driver, base_url, populated_test_db):
+    def test_edit_token_species(self, page, app_url, populated_test_db):
         """Should update token species field."""
-        main_page = MainPage(chrome_driver, base_url)
-        token_modal = TokenModal(chrome_driver, base_url)
+        main_page = MainPage(page, app_url)
+        token_modal = TokenModal(page, app_url)
 
         # Navigate and filter to show only tokens
         main_page.open()
@@ -89,10 +89,10 @@ class TestTokenEdit:
         token = populated_test_db.get_token(token_id)
         assert token['species'] == new_species
 
-    def test_save_token_changes(self, chrome_driver, base_url, populated_test_db):
+    def test_save_token_changes(self, page, app_url, populated_test_db):
         """Should save multiple field changes at once."""
-        main_page = MainPage(chrome_driver, base_url)
-        token_modal = TokenModal(chrome_driver, base_url)
+        main_page = MainPage(page, app_url)
+        token_modal = TokenModal(page, app_url)
 
         # Navigate and open token
         main_page.open()
@@ -120,10 +120,10 @@ class TestTokenEdit:
         assert token['class'] == "Cleric"
         assert token['notes'] == "Updated notes for testing"
 
-    def test_delete_token(self, chrome_driver, base_url, populated_test_db):
+    def test_delete_token(self, page, app_url, populated_test_db):
         """Should delete token from modal."""
-        main_page = MainPage(chrome_driver, base_url)
-        token_modal = TokenModal(chrome_driver, base_url)
+        main_page = MainPage(page, app_url)
+        token_modal = TokenModal(page, app_url)
 
         # Navigate to app
         main_page.open()
@@ -154,10 +154,10 @@ class TestTokenEdit:
         token = populated_test_db.get_token(token_id)
         assert token is None
 
-    def test_close_modal_without_saving(self, chrome_driver, base_url, populated_test_db):
+    def test_close_modal_without_saving(self, page, app_url, populated_test_db):
         """Should discard changes when closing modal without saving."""
-        main_page = MainPage(chrome_driver, base_url)
-        token_modal = TokenModal(chrome_driver, base_url)
+        main_page = MainPage(page, app_url)
+        token_modal = TokenModal(page, app_url)
 
         # Navigate and open token
         main_page.open()

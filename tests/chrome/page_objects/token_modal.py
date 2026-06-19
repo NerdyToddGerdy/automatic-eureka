@@ -1,8 +1,7 @@
 """
 Page Object for the Token Detail Modal.
 """
-from selenium.webdriver.common.by import By
-from .base_page import BasePage
+from .base_page import BasePage, By
 
 
 class TokenModal(BasePage):
@@ -147,31 +146,43 @@ class TokenModal(BasePage):
         """
         Get the value of a dynamic tag field (Species, Class, etc.).
 
+        Dynamic fields use a TagDropdown widget; the value is displayed in
+        .tag-dropdown-value inside the field's container.
+
         Args:
             field_name: Name of the field (e.g., "Species", "Class", "Scale")
 
         Returns:
-            Field value or None if not found
+            Field value text or None if not found
         """
         try:
-            # Dynamic fields have IDs like "editSpecies", "editClass", etc.
             field_id = f"edit{field_name}"
-            locator = (By.ID, field_id)
-            return self.get_attribute(locator, "value")
-        except:
+            sel = f"#{field_id}Container .tag-dropdown-value"
+            loc = self.page.locator(sel)
+            text = loc.inner_text()
+            return text if text and text != "Select or type..." else None
+        except Exception:
             return None
 
     def set_dynamic_field_value(self, field_name, value):
         """
-        Set a dynamic tag field value.
+        Set a dynamic tag field value via the TagDropdown widget.
+
+        Opens the dropdown, types the value in the search input, then presses
+        Enter to confirm.
 
         Args:
             field_name: Name of the field (e.g., "Species", "Class", "Scale")
             value: Value to set
         """
         field_id = f"edit{field_name}"
-        locator = (By.ID, field_id)
-        self.type_text(locator, value)
+        # Click the dropdown selected area to open it
+        self.page.locator(f"#{field_id}Container .tag-dropdown-selected").click()
+        # Type value into the search input
+        search = self.page.locator(f"#{field_id}Container .tag-dropdown-search")
+        search.fill(value)
+        # Press Enter to confirm
+        search.press("Enter")
 
     def save(self):
         """Save changes and close the modal."""

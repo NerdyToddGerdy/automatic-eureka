@@ -1,8 +1,7 @@
 """
 Page Object for Upload functionality and Image Type Selection Modal.
 """
-from selenium.webdriver.common.by import By
-from .base_page import BasePage
+from .base_page import BasePage, By
 
 
 class UploadModal(BasePage):
@@ -16,13 +15,13 @@ class UploadModal(BasePage):
     IMAGE_TYPE_MODAL = (By.ID, "imageTypeModal")
     MODAL_CLOSE_BTN = (By.CSS_SELECTOR, "#imageTypeModal .modal-close")
 
-    # Image type radio buttons
-    TYPE_TOKEN = (By.CSS_SELECTOR, "input[name='imageType'][value='Token']")
-    TYPE_MAP = (By.CSS_SELECTOR, "input[name='imageType'][value='Map']")
-    TYPE_HANDOUT = (By.CSS_SELECTOR, "input[name='imageType'][value='Handout']")
-    TYPE_PORTRAIT = (By.CSS_SELECTOR, "input[name='imageType'][value='Portrait']")
-    TYPE_SCENE = (By.CSS_SELECTOR, "input[name='imageType'][value='Scene']")
-    TYPE_ITEM = (By.CSS_SELECTOR, "input[name='imageType'][value='Item']")
+    # Image type labels (clicking the label checks the radio button)
+    TYPE_TOKEN = (By.CSS_SELECTOR, "label[data-type='Token']")
+    TYPE_MAP = (By.CSS_SELECTOR, "label[data-type='Map']")
+    TYPE_HANDOUT = (By.CSS_SELECTOR, "label[data-type='Handout']")
+    TYPE_PORTRAIT = (By.CSS_SELECTOR, "label[data-type='Portrait']")
+    TYPE_SCENE = (By.CSS_SELECTOR, "label[data-type='Scene']")
+    TYPE_ITEM = (By.CSS_SELECTOR, "label[data-type='Item']")
 
     # Form submission
     IMAGE_TYPE_FORM = (By.ID, "imageTypeForm")
@@ -38,7 +37,7 @@ class UploadModal(BasePage):
 
     def upload_file(self, file_path):
         """
-        Upload a file by sending the file path to the hidden file input.
+        Upload a file by setting the file path on the hidden file input.
 
         Args:
             file_path: Absolute path to the file to upload
@@ -46,8 +45,7 @@ class UploadModal(BasePage):
         Note:
             This triggers the file selection. The image type modal may appear next.
         """
-        file_input = self.driver.find_element(*self.FILE_INPUT)
-        file_input.send_keys(file_path)
+        self.page.locator(self._to_css(self.FILE_INPUT)).set_input_files(file_path)
 
     def upload_multiple_files(self, file_paths):
         """
@@ -56,9 +54,7 @@ class UploadModal(BasePage):
         Args:
             file_paths: List of absolute paths to files to upload
         """
-        file_input = self.driver.find_element(*self.FILE_INPUT)
-        # Join paths with newline for multiple file upload
-        file_input.send_keys('\n'.join(file_paths))
+        self.page.locator(self._to_css(self.FILE_INPUT)).set_input_files(file_paths)
 
     def wait_for_image_type_modal(self, timeout=10):
         """
@@ -102,10 +98,7 @@ class UploadModal(BasePage):
 
     def submit_image_type(self):
         """Submit the image type form and proceed with upload."""
-        # Find and click the submit button
-        submit_btn = self.driver.find_element(*self.CONTINUE_BTN)
-        submit_btn.click()
-        # Wait for modal to close
+        self.click(self.CONTINUE_BTN)
         self.wait_for_element_hidden(self.IMAGE_TYPE_MODAL)
 
     def select_and_submit_image_type(self, image_type):

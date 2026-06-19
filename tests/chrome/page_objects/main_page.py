@@ -1,9 +1,7 @@
 """
 Page Object for the main ImageTagger gallery interface.
 """
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import Select
-from .base_page import BasePage
+from .base_page import BasePage, By
 
 
 class MainPage(BasePage):
@@ -181,9 +179,8 @@ class MainPage(BasePage):
         """
         cards = self.get_token_cards()
         if index < len(cards):
-            # Find checkbox within the card
-            checkbox = cards[index].find_element(By.CSS_SELECTOR, "input[type='checkbox']")
-            if not checkbox.is_selected():
+            checkbox = cards[index].locator("input[type='checkbox']")
+            if not checkbox.is_checked():
                 checkbox.click()
         else:
             raise IndexError(f"Token index {index} out of range")
@@ -223,12 +220,11 @@ class MainPage(BasePage):
 
     def wait_for_loading_complete(self, timeout=10):
         """
-        Wait for the loading indicator to disappear.
+        Wait for the gallery to finish loading.
 
-        Args:
-            timeout: Maximum wait time in seconds
+        Uses network idle to handle debounced API calls (e.g., search with 300ms debounce).
         """
-        self.wait_for_element_hidden(self.LOADING_INDICATOR, timeout)
+        self.page.wait_for_load_state('networkidle', timeout=timeout * 1000)
 
     def is_gallery_empty(self):
         """
