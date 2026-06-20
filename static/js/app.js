@@ -673,6 +673,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadFilterOptions();
     setupEventListeners();
     setupScrollToTop();
+    setupModalAccessibility();
     updateModeIndicator(); // Show reference vs copy mode indicator
 });
 
@@ -1923,6 +1924,84 @@ function closeModals() {
         modal.style.display = 'none';
     });
 }
+
+// ============================================================================
+// MODAL ACCESSIBILITY: ARIA dialog semantics, focus trap, focus return, Escape
+// ============================================================================
+
+const modalFocusTriggers = new Map();
+
+function getFocusableElements(container) {
+    return Array.from(container.querySelectorAll(
+        'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )).filter(el => el.offsetParent !== null);
+}
+
+// There's normally at most one .modal visible at a time (closeModals() closes them as a unit)
+function getOpenModal() {
+    return Array.from(document.querySelectorAll('.modal')).find(m => m.style.display === 'flex') || null;
+}
+
+// Give every modal ARIA dialog semantics, and move/restore focus as it opens/closes
+function setupModalAccessibility() {
+    document.querySelectorAll('.modal').forEach(modalEl => {
+        const content = modalEl.querySelector('.modal-content');
+        if (!content) return;
+
+        content.setAttribute('role', 'dialog');
+        content.setAttribute('aria-modal', 'true');
+        const heading = content.querySelector('h2');
+        if (heading) {
+            if (!heading.id) heading.id = `${modalEl.id}Heading`;
+            content.setAttribute('aria-labelledby', heading.id);
+        }
+
+        // Watches display:none <-> display:flex so every open path (existing and future)
+        // gets focus management for free, without each call site having to opt in.
+        const observer = new MutationObserver(() => {
+            if (modalEl.style.display === 'flex') {
+                modalFocusTriggers.set(modalEl, document.activeElement);
+                const focusable = getFocusableElements(content);
+                (focusable[0] || content).focus({ preventScroll: true });
+            } else if (modalFocusTriggers.has(modalEl)) {
+                const trigger = modalFocusTriggers.get(modalEl);
+                modalFocusTriggers.delete(modalEl);
+                if (trigger && typeof trigger.focus === 'function' && document.body.contains(trigger)) {
+                    trigger.focus({ preventScroll: true });
+                }
+            }
+        });
+        observer.observe(modalEl, { attributes: true, attributeFilter: ['style'] });
+    });
+}
+
+// Escape closes the open modal; Tab/Shift+Tab stays trapped inside it
+document.addEventListener('keydown', (e) => {
+    const openModal = getOpenModal();
+    if (!openModal) return;
+
+    if (e.key === 'Escape') {
+        e.preventDefault();
+        closeModals();
+        return;
+    }
+
+    if (e.key === 'Tab') {
+        const content = openModal.querySelector('.modal-content');
+        const focusable = getFocusableElements(content);
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+
+        if (e.shiftKey && document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
+        }
+    }
+});
 
 // Update token count display
 function updateTokenCount() {
