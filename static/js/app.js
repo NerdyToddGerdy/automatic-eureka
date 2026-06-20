@@ -105,6 +105,35 @@ const selectedCount = document.getElementById('selectedCount');
 const gridViewBtn = document.getElementById('gridViewBtn');
 const listViewBtn = document.getElementById('listViewBtn');
 
+// Shared keyboard-navigation helpers for the searchable dropdown/multiselect
+// widgets below (TagDropdown, TagMultiSelect, FilterMultiSelect): they all
+// pair a text input with a role="listbox" of role="option" divs, so the
+// "highlighted" option is tracked via aria-activedescendant rather than
+// real DOM focus (the input keeps focus the whole time).
+let widgetIdCounter = 0;
+
+function highlightListboxOption(listboxEl, ownerEl, index) {
+    const options = Array.from(listboxEl.querySelectorAll('[role="option"]'));
+    options.forEach(opt => opt.classList.remove('highlighted'));
+    if (index >= 0 && index < options.length) {
+        options[index].classList.add('highlighted');
+        ownerEl.setAttribute('aria-activedescendant', options[index].id);
+        options[index].scrollIntoView({ block: 'nearest' });
+        return index;
+    }
+    ownerEl.removeAttribute('aria-activedescendant');
+    return -1;
+}
+
+function moveListboxHighlight(listboxEl, ownerEl, currentIndex, delta) {
+    const count = listboxEl.querySelectorAll('[role="option"]').length;
+    if (count === 0) return -1;
+    let next = currentIndex + delta;
+    if (next < 0) next = count - 1;
+    if (next >= count) next = 0;
+    return highlightListboxOption(listboxEl, ownerEl, next);
+}
+
 // TagDropdown class for Airtable/Notion-style tag selection
 class TagDropdown {
     constructor(container, fieldName, imageType, initialValue = '') {
@@ -115,21 +144,26 @@ class TagDropdown {
         this.options = [];
         this.isOpen = false;
         this.filteredOptions = [];
+        this.highlightedIndex = -1;
+        this.instanceId = `tagDropdown-${widgetIdCounter++}`;
 
         this.render();
         this.loadOptions();
     }
 
     render() {
+        const listboxId = `${this.instanceId}-listbox`;
         this.container.innerHTML = `
             <div class="tag-dropdown">
-                <div class="tag-dropdown-selected" data-field="${this.fieldName}">
+                <div class="tag-dropdown-selected" data-field="${this.fieldName}"
+                     role="combobox" tabindex="0" aria-haspopup="listbox" aria-expanded="false"
+                     aria-controls="${listboxId}">
                     <span class="tag-dropdown-value">${this.value || 'Select or type...'}</span>
                     <span class="tag-dropdown-arrow">▼</span>
                 </div>
                 <div class="tag-dropdown-menu" style="display: none;">
                     <input type="text" class="tag-dropdown-search" placeholder="Search or create new..." />
-                    <div class="tag-dropdown-options"></div>
+                    <div class="tag-dropdown-options" role="listbox" id="${listboxId}"></div>
                 </div>
             </div>
         `;
@@ -150,14 +184,35 @@ class TagDropdown {
             this.toggle();
         });
 
+        // Keyboard activation of the combobox trigger itself
+        this.selectedEl.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') {
+                e.preventDefault();
+                if (!this.isOpen) this.open();
+            } else if (e.key === 'Escape' && this.isOpen) {
+                this.close();
+            }
+        });
+
         // Search input
         this.searchEl.addEventListener('input', () => {
             this.filterOptions(this.searchEl.value);
         });
 
         this.searchEl.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
+            if (e.key === 'ArrowDown') {
                 e.preventDefault();
+                this.highlightedIndex = moveListboxHighlight(this.optionsEl, this.searchEl, this.highlightedIndex, 1);
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                this.highlightedIndex = moveListboxHighlight(this.optionsEl, this.searchEl, this.highlightedIndex, -1);
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                const highlighted = this.optionsEl.querySelector('.highlighted');
+                if (highlighted) {
+                    highlighted.click();
+                    return;
+                }
                 const searchValue = this.searchEl.value.trim();
                 if (searchValue) {
                     this.selectValue(searchValue);
@@ -217,11 +272,15 @@ class TagDropdown {
 
     renderOptions(searchTerm = '') {
         this.optionsEl.innerHTML = '';
+        this.highlightedIndex = -1;
+        let optionIndex = 0;
 
         // Show filtered existing options
         this.filteredOptions.forEach(option => {
             const optionEl = document.createElement('div');
             optionEl.className = 'tag-dropdown-option';
+            optionEl.id = `${this.instanceId}-option-${optionIndex++}`;
+            optionEl.setAttribute('role', 'option');
             optionEl.textContent = option;
             optionEl.addEventListener('click', () => {
                 this.selectValue(option);
@@ -234,6 +293,8 @@ class TagDropdown {
         if (searchTerm && !this.options.some(opt => opt.toLowerCase() === searchTerm.toLowerCase())) {
             const createEl = document.createElement('div');
             createEl.className = 'tag-dropdown-option tag-dropdown-create';
+            createEl.id = `${this.instanceId}-option-${optionIndex++}`;
+            createEl.setAttribute('role', 'option');
             createEl.innerHTML = `<strong>Create:</strong> "${searchTerm}"`;
             createEl.addEventListener('click', () => {
                 this.selectValue(searchTerm);
@@ -246,6 +307,8 @@ class TagDropdown {
         if (this.value) {
             const clearEl = document.createElement('div');
             clearEl.className = 'tag-dropdown-option tag-dropdown-clear';
+            clearEl.id = `${this.instanceId}-option-${optionIndex++}`;
+            clearEl.setAttribute('role', 'option');
             clearEl.textContent = 'Clear selection';
             clearEl.addEventListener('click', () => {
                 this.selectValue('');
@@ -276,6 +339,7 @@ class TagDropdown {
 
     open() {
         this.isOpen = true;
+        this.selectedEl.setAttribute('aria-expanded', 'true');
         this.menuEl.style.display = 'block';
         this.searchEl.value = '';
         this.renderOptions();
@@ -284,6 +348,8 @@ class TagDropdown {
 
     close() {
         this.isOpen = false;
+        this.selectedEl.setAttribute('aria-expanded', 'false');
+        this.searchEl.removeAttribute('aria-activedescendant');
         this.menuEl.style.display = 'none';
     }
 
@@ -312,22 +378,27 @@ class TagMultiSelect {
         this.options = [];
         this.isOpen = false;
         this.filteredOptions = [];
+        this.highlightedIndex = -1;
+        this.instanceId = `tagMultiselect-${widgetIdCounter++}`;
         this.render();
         this.loadOptions();
     }
 
     render() {
+        const listboxId = `${this.instanceId}-listbox`;
         this.container.innerHTML = `
             <div class="tag-multiselect">
                 <div class="tag-multiselect-selected">
                     <div class="tag-pills"></div>
                     <input type="text"
                            class="tag-multiselect-input"
+                           role="combobox" aria-haspopup="listbox" aria-expanded="false"
+                           aria-controls="${listboxId}" aria-autocomplete="list"
                            placeholder="${this.values.length ? 'Add more...' : 'Select or type...'}"
                     />
                 </div>
                 <div class="tag-multiselect-dropdown" style="display: none;">
-                    <div class="tag-multiselect-options"></div>
+                    <div class="tag-multiselect-options" role="listbox" id="${listboxId}"></div>
                 </div>
             </div>
         `;
@@ -345,7 +416,7 @@ class TagMultiSelect {
         this.pillsEl.innerHTML = this.values.map(value => `
             <span class="tag-pill">
                 <span>${this.escapeHtml(value)}</span>
-                <button type="button" class="tag-pill-remove" data-value="${this.escapeHtml(value)}">&times;</button>
+                <button type="button" class="tag-pill-remove" data-value="${this.escapeHtml(value)}" aria-label="Remove ${this.escapeHtml(value)}">&times;</button>
             </span>
         `).join('');
 
@@ -365,10 +436,21 @@ class TagMultiSelect {
             this.filterOptions(e.target.value);
         });
 
-        // Input enter key (add custom value)
+        // Input enter key (add custom value), and arrow keys to move through options
         this.inputEl.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
+            if (e.key === 'ArrowDown') {
                 e.preventDefault();
+                this.highlightedIndex = moveListboxHighlight(this.optionsEl, this.inputEl, this.highlightedIndex, 1);
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                this.highlightedIndex = moveListboxHighlight(this.optionsEl, this.inputEl, this.highlightedIndex, -1);
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                const highlighted = this.optionsEl.querySelector('.highlighted');
+                if (highlighted) {
+                    highlighted.click();
+                    return;
+                }
                 const value = this.inputEl.value.trim();
                 if (value) {
                     this.addValue(value);
@@ -422,13 +504,15 @@ class TagMultiSelect {
     }
 
     renderOptions() {
+        this.highlightedIndex = -1;
+
         if (this.filteredOptions.length === 0) {
             this.optionsEl.innerHTML = '<div class="tag-multiselect-empty">No options available</div>';
             return;
         }
 
-        this.optionsEl.innerHTML = this.filteredOptions.map(option => `
-            <div class="tag-multiselect-option" data-value="${this.escapeHtml(option)}">
+        this.optionsEl.innerHTML = this.filteredOptions.map((option, i) => `
+            <div class="tag-multiselect-option" role="option" id="${this.instanceId}-option-${i}" data-value="${this.escapeHtml(option)}">
                 ${this.escapeHtml(option)}
             </div>
         `).join('');
@@ -436,12 +520,15 @@ class TagMultiSelect {
 
     openDropdown() {
         this.isOpen = true;
+        this.inputEl.setAttribute('aria-expanded', 'true');
         this.dropdownEl.style.display = 'block';
         this.filterOptions(this.inputEl.value);
     }
 
     closeDropdown() {
         this.isOpen = false;
+        this.inputEl.setAttribute('aria-expanded', 'false');
+        this.inputEl.removeAttribute('aria-activedescendant');
         this.dropdownEl.style.display = 'none';
     }
 
@@ -485,22 +572,27 @@ class FilterMultiSelect {
         this.values = [];
         this.options = options;
         this.isOpen = false;
+        this.highlightedIndex = -1;
+        this.instanceId = `filterMultiselect-${widgetIdCounter++}`;
         this.render();
     }
 
     render() {
+        const listboxId = `${this.instanceId}-listbox`;
         this.container.innerHTML = `
             <div class="filter-multiselect">
                 <div class="filter-multiselect-selected">
                     <div class="filter-pills"></div>
                     <input type="text"
                            class="filter-multiselect-input"
+                           role="combobox" aria-haspopup="listbox" aria-expanded="false"
+                           aria-controls="${listboxId}" aria-autocomplete="list"
                            placeholder="Select ${this.filterName}..."
                     />
-                    <button type="button" class="filter-dropdown-toggle">▼</button>
+                    <button type="button" class="filter-dropdown-toggle" aria-label="Toggle ${this.escapeHtml(this.filterName)} options">▼</button>
                 </div>
                 <div class="filter-multiselect-dropdown" style="display: none;">
-                    <div class="filter-multiselect-options"></div>
+                    <div class="filter-multiselect-options" role="listbox" id="${listboxId}"></div>
                 </div>
             </div>
         `;
@@ -524,7 +616,7 @@ class FilterMultiSelect {
             this.pillsEl.innerHTML = this.values.map(value => `
                 <span class="filter-pill">
                     <span>${this.escapeHtml(value)}</span>
-                    <button type="button" class="filter-pill-remove" data-value="${this.escapeHtml(value)}">&times;</button>
+                    <button type="button" class="filter-pill-remove" data-value="${this.escapeHtml(value)}" aria-label="Remove ${this.escapeHtml(value)}">&times;</button>
                 </span>
             `).join('');
             this.inputEl.placeholder = '';
@@ -533,14 +625,21 @@ class FilterMultiSelect {
 
     renderOptions() {
         const availableOptions = this.options.filter(opt => !this.values.includes(opt));
+        this.renderOptionsList(availableOptions);
+    }
+
+    // Shared by renderOptions() and the live-filter input handler below, so option
+    // ids/roles stay consistent regardless of which path last rendered the list.
+    renderOptionsList(availableOptions) {
+        this.highlightedIndex = -1;
 
         if (availableOptions.length === 0) {
             this.optionsEl.innerHTML = '<div class="filter-multiselect-empty">No options available</div>';
             return;
         }
 
-        this.optionsEl.innerHTML = availableOptions.map(option => `
-            <div class="filter-multiselect-option" data-value="${this.escapeHtml(option)}">
+        this.optionsEl.innerHTML = availableOptions.map((option, i) => `
+            <div class="filter-multiselect-option" role="option" id="${this.instanceId}-option-${i}" data-value="${this.escapeHtml(option)}">
                 ${this.escapeHtml(option)}
             </div>
         `).join('');
@@ -579,6 +678,21 @@ class FilterMultiSelect {
             }
         });
 
+        // Arrow keys move through options; Enter selects the highlighted one
+        this.inputEl.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                this.highlightedIndex = moveListboxHighlight(this.optionsEl, this.inputEl, this.highlightedIndex, 1);
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                this.highlightedIndex = moveListboxHighlight(this.optionsEl, this.inputEl, this.highlightedIndex, -1);
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                const highlighted = this.optionsEl.querySelector('.highlighted');
+                if (highlighted) highlighted.click();
+            }
+        });
+
         // Filter options as user types
         this.inputEl.addEventListener('input', (e) => {
             const query = e.target.value.toLowerCase();
@@ -586,21 +700,20 @@ class FilterMultiSelect {
                 .filter(opt => !this.values.includes(opt))
                 .filter(opt => opt.toLowerCase().includes(query));
 
-            this.optionsEl.innerHTML = filteredOptions.map(option => `
-                <div class="filter-multiselect-option" data-value="${this.escapeHtml(option)}">
-                    ${this.escapeHtml(option)}
-                </div>
-            `).join('');
+            this.renderOptionsList(filteredOptions);
         });
     }
 
     openDropdown() {
         this.isOpen = true;
+        this.inputEl.setAttribute('aria-expanded', 'true');
         this.dropdownEl.style.display = 'block';
     }
 
     closeDropdown() {
         this.isOpen = false;
+        this.inputEl.setAttribute('aria-expanded', 'false');
+        this.inputEl.removeAttribute('aria-activedescendant');
         this.dropdownEl.style.display = 'none';
         this.inputEl.value = '';
         this.renderOptions();
@@ -3806,7 +3919,9 @@ function switchMediaTab(tabName) {
 
     // Update tab buttons
     document.querySelectorAll('.media-tab').forEach(tab => {
-        tab.classList.toggle('active', tab.dataset.tab === tabName);
+        const isActive = tab.dataset.tab === tabName;
+        tab.classList.toggle('active', isActive);
+        tab.setAttribute('aria-selected', String(isActive));
     });
 
     // Show/hide content sections

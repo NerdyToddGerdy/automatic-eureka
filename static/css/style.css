@@ -809,7 +809,8 @@ h1, h2, h3, h4, h5, h6 {
     background-color: rgba(201, 162, 39, 0.05);
 }
 
-.image-type-option input[type="radio"]:checked ~ .image-type-option-content {
+.image-type-option input[type="radio"]:checked ~ .image-type-option-content,
+.image-type-option input[type="radio"]:focus-visible ~ .image-type-option-content {
     border-color: var(--gold);
     background-color: rgba(201, 162, 39, 0.15);
     box-shadow: 0 0 15px rgba(201, 162, 39, 0.3);
@@ -1054,7 +1055,8 @@ textarea.form-input {
     transition: background-color 0.2s;
 }
 
-.tag-dropdown-option:hover {
+.tag-dropdown-option:hover,
+.tag-dropdown-option.highlighted {
     background-color: var(--bg-light);
 }
 
@@ -1947,7 +1949,8 @@ textarea.form-input {
     transition: background-color 0.2s;
 }
 
-.tag-multiselect-option:hover {
+.tag-multiselect-option:hover,
+.tag-multiselect-option.highlighted {
     background: var(--hover-bg, #3a3a3a);
 }
 
@@ -2139,7 +2142,8 @@ textarea.form-input {
     transition: background-color 0.2s;
 }
 
-.filter-multiselect-option:hover {
+.filter-multiselect-option:hover,
+.filter-multiselect-option.highlighted {
     background: var(--hover-bg, #3a3a3a);
 }
 
@@ -2724,7 +2728,8 @@ textarea.form-input {
     background: rgba(201, 162, 39, 0.05);
 }
 
-.audio-type-option input[type="radio"]:checked ~ .audio-type-option-content {
+.audio-type-option input[type="radio"]:checked ~ .audio-type-option-content,
+.audio-type-option input[type="radio"]:focus-visible ~ .audio-type-option-content {
     border-color: var(--gold);
     background: rgba(201, 162, 39, 0.15);
     box-shadow: 0 0 15px rgba(201, 162, 39, 0.3);

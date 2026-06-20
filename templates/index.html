@@ -34,18 +34,18 @@
         <div id="modeIndicator" class="mode-indicator" style="display: none;"></div>
 
         <!-- Media Type Tabs -->
-        <div class="media-tabs">
-            <button class="media-tab active" data-tab="images">
+        <div class="media-tabs" role="tablist" aria-label="Media type">
+            <button class="media-tab active" data-tab="images" role="tab" aria-selected="true" aria-controls="tokenGallery">
                 <span class="media-tab-icon">🖼️</span>
                 <span class="media-tab-label">Images</span>
                 <span class="media-tab-count" id="imageTabCount">0</span>
             </button>
-            <button class="media-tab" data-tab="audio">
+            <button class="media-tab" data-tab="audio" role="tab" aria-selected="false" aria-controls="audioGallery">
                 <span class="media-tab-icon">🎵</span>
                 <span class="media-tab-label">Audio</span>
                 <span class="media-tab-count" id="audioTabCount">0</span>
             </button>
-            <button class="media-tab" data-tab="pdfs">
+            <button class="media-tab" data-tab="pdfs" role="tab" aria-selected="false" aria-controls="pdfGallery">
                 <span class="media-tab-icon">📄</span>
                 <span class="media-tab-label">PDFs</span>
                 <span class="media-tab-count" id="pdfTabCount">0</span>
