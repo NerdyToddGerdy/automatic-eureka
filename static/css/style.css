@@ -366,6 +366,7 @@ h1, h2, h3, h4, h5, h6 {
 .tag-style { background-color: #6a7c4a; }
 .tag-location { background-color: #7c4a5a; }
 .tag-mood { background-color: #4a5a7c; }
+.tag-pages { background-color: #5a5a5a; }
 
 /* Image Type Badge */
 .image-type-badge {

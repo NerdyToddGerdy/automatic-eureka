@@ -3733,16 +3733,20 @@ function switchMediaTab(tabName) {
     // Show/hide content sections
     const tokenGallery = document.getElementById('tokenGallery');
     const audioGallery = document.getElementById('audioGallery');
-    const imageFilters = document.querySelector('.filters:not(#audioFilters)');
+    const pdfGallery = document.getElementById('pdfGallery');
+    const imageFilters = document.getElementById('imageFilters');
     const audioFilters = document.getElementById('audioFilters');
+    const pdfFilters = document.getElementById('pdfFilters');
     const bulkActionsBar = document.getElementById('bulkActionsBar');
     const viewToggle = document.querySelector('.view-toggle');
 
     if (tabName === 'images') {
         tokenGallery.style.display = '';
         audioGallery.style.display = 'none';
+        pdfGallery.style.display = 'none';
         imageFilters.style.display = '';
         audioFilters.style.display = 'none';
+        pdfFilters.style.display = 'none';
         bulkActionsBar.style.display = selectedTokenIds.size > 0 ? 'flex' : 'none';
         viewToggle.style.display = '';
 
@@ -3751,8 +3755,10 @@ function switchMediaTab(tabName) {
     } else if (tabName === 'audio') {
         tokenGallery.style.display = 'none';
         audioGallery.style.display = '';
+        pdfGallery.style.display = 'none';
         imageFilters.style.display = 'none';
         audioFilters.style.display = '';
+        pdfFilters.style.display = 'none';
         bulkActionsBar.style.display = 'none';
         viewToggle.style.display = 'none';
 
@@ -3763,6 +3769,24 @@ function switchMediaTab(tabName) {
         if (audioFiles.length === 0) {
             loadAudioFiles();
         }
+    } else if (tabName === 'pdfs') {
+        tokenGallery.style.display = 'none';
+        audioGallery.style.display = 'none';
+        pdfGallery.style.display = '';
+        imageFilters.style.display = 'none';
+        audioFilters.style.display = 'none';
+        pdfFilters.style.display = '';
+        bulkActionsBar.style.display = 'none';
+        viewToggle.style.display = 'none';
+
+        // Update upload button text
+        document.getElementById('uploadBtn').innerHTML = '<span>📤</span> Upload PDFs';
+
+        // Load PDF files if not loaded
+        if (pdfFiles.length === 0) {
+            loadPdfFiles();
+        }
+        loadPdfFilterOptions();
     }
 }
 
@@ -4520,10 +4544,12 @@ function formatDate(dateStr) {
     return date.toLocaleDateString();
 }
 
-// Override upload button click for audio tab
+// Override upload button click depending on the active media tab
 const originalUploadBtnHandler = () => {
     if (currentMediaTab === 'audio') {
         document.getElementById('audioUploadModal').style.display = 'flex';
+    } else if (currentMediaTab === 'pdfs') {
+        document.getElementById('pdfUploadModal').style.display = 'flex';
     } else {
         document.getElementById('addFilesModal').style.display = 'flex';
     }
@@ -4533,6 +4559,7 @@ const originalUploadBtnHandler = () => {
 document.addEventListener('DOMContentLoaded', () => {
     initAudioListeners();
     initImageUploadListeners();
+    initPdfListeners();
 
     // Override upload button
     const uploadBtn = document.getElementById('uploadBtn');
@@ -4555,5 +4582,606 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             })
             .catch(() => {});
+        // Fetch PDF count
+        fetch('/api/pdfs')
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    document.getElementById('pdfTabCount').textContent = data.count || 0;
+                }
+            })
+            .catch(() => {});
     }, 100);
 });
+
+// ============================================================================
+// PDF FILES
+// ============================================================================
+
+// PDF state
+let pdfFiles = [];
+let filteredPdfFiles = [];
+let pendingPdfUploadFiles = null;
+let pdfUploadInProgress = false;
+
+// PDF filter state
+let currentPdfFilters = {
+    search: '',
+    image_type: '',
+    source: '',
+    campaign: '',
+    sort_by: 'filename',
+    sort_order: 'ASC'
+};
+
+// Initialize PDF functionality
+function initPdfListeners() {
+    const pdfSearchInput = document.getElementById('pdfSearchInput');
+    if (pdfSearchInput) {
+        pdfSearchInput.addEventListener('input', debounce(handlePdfSearchChange, 300));
+    }
+
+    const pdfTypeFilter = document.getElementById('pdfTypeFilter');
+    if (pdfTypeFilter) {
+        pdfTypeFilter.addEventListener('change', handlePdfTypeFilterChange);
+    }
+
+    const pdfSourceFilter = document.getElementById('pdfSourceFilter');
+    if (pdfSourceFilter) {
+        pdfSourceFilter.addEventListener('change', handlePdfSourceFilterChange);
+    }
+
+    const pdfCampaignFilter = document.getElementById('pdfCampaignFilter');
+    if (pdfCampaignFilter) {
+        pdfCampaignFilter.addEventListener('change', handlePdfCampaignFilterChange);
+    }
+
+    const pdfSortBy = document.getElementById('pdfSortBy');
+    if (pdfSortBy) {
+        pdfSortBy.addEventListener('change', handlePdfSortChange);
+    }
+
+    const clearPdfFiltersBtn = document.getElementById('clearPdfFiltersBtn');
+    if (clearPdfFiltersBtn) {
+        clearPdfFiltersBtn.addEventListener('click', clearPdfFilters);
+    }
+
+    const pdfEditForm = document.getElementById('pdfEditForm');
+    if (pdfEditForm) {
+        pdfEditForm.addEventListener('submit', handlePdfUpdate);
+    }
+
+    const deletePdfBtn = document.getElementById('deletePdfBtn');
+    if (deletePdfBtn) {
+        deletePdfBtn.addEventListener('click', handlePdfDelete);
+    }
+
+    const pdfFilePathLink = document.getElementById('pdfModalFilePath');
+    if (pdfFilePathLink) {
+        pdfFilePathLink.addEventListener('click', handlePdfFilePathClick);
+    }
+
+    const pdfShowInFinderBtn = document.getElementById('pdfShowInFinderBtn');
+    if (pdfShowInFinderBtn) {
+        pdfShowInFinderBtn.addEventListener('click', handlePdfShowInFinder);
+    }
+
+    const pdfOpenBtn = document.getElementById('pdfOpenBtn');
+    if (pdfOpenBtn) {
+        pdfOpenBtn.addEventListener('click', handlePdfOpen);
+    }
+
+    const pdfUploadForm = document.getElementById('pdfUploadForm');
+    if (pdfUploadForm) {
+        pdfUploadForm.addEventListener('submit', handlePdfUpload);
+    }
+
+    const pdfFileInput = document.getElementById('pdfFileInput');
+    if (pdfFileInput) {
+        pdfFileInput.addEventListener('change', handlePdfFileSelect);
+    }
+
+    setupPdfDropZone();
+}
+
+// Load PDF files from API
+async function loadPdfFiles() {
+    const pdfGallery = document.getElementById('pdfGallery');
+    pdfGallery.innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading PDFs...</p></div>';
+
+    try {
+        const params = new URLSearchParams(currentPdfFilters);
+        const response = await fetch(`/api/pdfs?${params}`);
+        const data = await response.json();
+
+        if (data.success) {
+            pdfFiles = data.pdf_files;
+            filteredPdfFiles = pdfFiles;
+            renderPdfFiles();
+            updatePdfTabCount();
+        } else {
+            showError('Failed to load PDF files');
+        }
+    } catch (error) {
+        showError('Error loading PDF files: ' + error.message);
+    }
+}
+
+// Render PDF files to gallery
+function renderPdfFiles() {
+    const pdfGallery = document.getElementById('pdfGallery');
+    pdfGallery.innerHTML = '';
+
+    if (filteredPdfFiles.length === 0) {
+        pdfGallery.innerHTML = `
+            <div class="empty-state" style="display: block;">
+                <h2>No PDFs Found</h2>
+                <p>Add some PDF references to get started!</p>
+            </div>
+        `;
+        return;
+    }
+
+    filteredPdfFiles.forEach(pdf => {
+        const card = createPdfCard(pdf);
+        pdfGallery.appendChild(card);
+    });
+}
+
+// Create a PDF card element
+function createPdfCard(pdf) {
+    const card = document.createElement('div');
+    card.className = 'token-card';
+    card.dataset.pdfId = pdf.id;
+
+    if (pdf.is_missing) {
+        card.classList.add('missing');
+    }
+
+    const displayName = pdf.name || pdf.filename;
+    const imageType = pdf.image_type || 'Handout';
+    const pageLabel = pdf.page_count ? `${pdf.page_count} page${pdf.page_count !== 1 ? 's' : ''}` : '';
+
+    card.innerHTML = `
+        <div class="token-image-container">
+            <img src="/api/pdf-thumbnail/${pdf.id}" alt="${escapeHtml(displayName)}" class="token-image">
+            <span class="image-type-badge image-type-${imageType.toLowerCase()}">${imageType}</span>
+        </div>
+        <div class="token-info">
+            <div class="token-name">${escapeHtml(displayName)}</div>
+            <div class="token-tags">
+                ${pdf.source ? `<span class="tag tag-source">${escapeHtml(pdf.source)}</span>` : ''}
+                ${pdf.campaign ? `<span class="tag tag-campaign">${escapeHtml(pdf.campaign)}</span>` : ''}
+                ${pageLabel ? `<span class="tag tag-pages">${pageLabel}</span>` : ''}
+            </div>
+        </div>
+    `;
+
+    card.addEventListener('click', () => openPdfModal(pdf));
+
+    return card;
+}
+
+// Open the PDF detail modal
+function openPdfModal(pdf) {
+    const modal = document.getElementById('pdfModal');
+
+    document.getElementById('editPdfId').value = pdf.id;
+    document.getElementById('pdfModalCover').src = `/api/pdf-thumbnail/${pdf.id}`;
+    document.getElementById('pdfModalTitle').textContent = pdf.name || pdf.filename;
+    document.getElementById('pdfModalFilename').textContent = pdf.filename;
+    document.getElementById('pdfModalPageCount').textContent = pdf.page_count || 'Unknown';
+    document.getElementById('pdfModalDateAdded').textContent = formatDate(pdf.date_added);
+
+    document.getElementById('editPdfName').value = pdf.name || '';
+    document.getElementById('editPdfImageType').value = pdf.image_type || 'Handout';
+    document.getElementById('editPdfSource').value = pdf.source || '';
+    document.getElementById('editPdfCampaign').value = pdf.campaign || '';
+    document.getElementById('editPdfNotes').value = pdf.notes || '';
+
+    const filePathLink = document.getElementById('pdfModalFilePath');
+    const filePathText = document.getElementById('pdfModalFilePathText');
+    filePathText.textContent = pdf.filepath;
+    filePathLink.dataset.filepath = pdf.filepath;
+
+    const showInFinderBtn = document.getElementById('pdfShowInFinderBtn');
+    if (isElectron && window.electronAPI && window.electronAPI.showItemInFolder) {
+        showInFinderBtn.style.display = 'inline-block';
+    } else {
+        showInFinderBtn.style.display = 'none';
+    }
+
+    const openBtn = document.getElementById('pdfOpenBtn');
+    openBtn.dataset.filepath = pdf.filepath;
+    openBtn.dataset.pdfId = pdf.id;
+
+    modal.style.display = 'flex';
+}
+
+// Handle PDF update
+async function handlePdfUpdate(e) {
+    e.preventDefault();
+
+    const pdfId = document.getElementById('editPdfId').value;
+
+    const updateData = {
+        Name: document.getElementById('editPdfName').value,
+        ImageType: document.getElementById('editPdfImageType').value,
+        Source: document.getElementById('editPdfSource').value,
+        Campaign: document.getElementById('editPdfCampaign').value,
+        Notes: document.getElementById('editPdfNotes').value
+    };
+
+    try {
+        const response = await fetch(`/api/pdfs/${pdfId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updateData)
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            closeModals();
+            loadPdfFiles();
+            loadPdfFilterOptions();
+            showNotification('PDF updated successfully');
+        } else {
+            showError(data.error || 'Failed to update PDF');
+        }
+    } catch (error) {
+        showError('Error updating PDF: ' + error.message);
+    }
+}
+
+// Handle PDF delete
+async function handlePdfDelete() {
+    const pdfId = document.getElementById('editPdfId').value;
+
+    if (!confirm('Are you sure you want to delete this PDF? This will delete the file permanently.')) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/pdfs/${pdfId}`, {
+            method: 'DELETE'
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            closeModals();
+            loadPdfFiles();
+            showNotification('PDF deleted successfully');
+        } else {
+            showError(data.error || 'Failed to delete PDF');
+        }
+    } catch (error) {
+        showError('Error deleting PDF: ' + error.message);
+    }
+}
+
+// Handle PDF file path link click (copy to clipboard)
+async function handlePdfFilePathClick(e) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const filepath = e.currentTarget.dataset.filepath;
+    if (!filepath) return;
+
+    try {
+        await navigator.clipboard.writeText(filepath);
+        showSuccess('Path copied to clipboard');
+    } catch (error) {
+        const textArea = document.createElement('textarea');
+        textArea.value = filepath;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        showSuccess('Path copied to clipboard');
+    }
+}
+
+// Handle PDF "Show in Finder" button click
+async function handlePdfShowInFinder(e) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const filepath = document.getElementById('pdfModalFilePath').dataset.filepath;
+
+    if (!filepath) {
+        showError('No file path available');
+        return;
+    }
+
+    if (!window.electronAPI || !window.electronAPI.showItemInFolder) {
+        showError('This feature is only available in desktop mode');
+        return;
+    }
+
+    try {
+        const result = await window.electronAPI.showItemInFolder(filepath);
+        if (result.success) {
+            showSuccess('Opening file location...');
+        } else {
+            showError(`Failed to open: ${result.error}`);
+        }
+    } catch (error) {
+        showError(`Error: ${error.message}`);
+    }
+}
+
+// Handle PDF "Open PDF" button click - Electron opens system viewer, browser opens a new tab
+async function handlePdfOpen(e) {
+    e.preventDefault();
+
+    const btn = e.currentTarget;
+    const filepath = btn.dataset.filepath;
+    const pdfId = btn.dataset.pdfId;
+
+    if (isElectron && window.electronAPI && window.electronAPI.openFile) {
+        try {
+            const result = await window.electronAPI.openFile(filepath);
+            if (!result.success) {
+                showError(`Failed to open PDF: ${result.error}`);
+            }
+        } catch (error) {
+            showError(`Error opening PDF: ${error.message}`);
+        }
+    } else {
+        window.open(`/api/pdf/${pdfId}`, '_blank');
+    }
+}
+
+// Setup PDF drop zone
+function setupPdfDropZone() {
+    const dropZone = document.getElementById('pdfDropZone');
+    if (!dropZone) return;
+
+    dropZone.addEventListener('click', () => {
+        document.getElementById('pdfFileInput').click();
+    });
+
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('drag-over');
+    });
+
+    dropZone.addEventListener('dragleave', () => {
+        dropZone.classList.remove('drag-over');
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('drag-over');
+
+        const files = Array.from(e.dataTransfer.files).filter(f =>
+            f.name.match(/\.pdf$/i)
+        );
+
+        if (files.length > 0) {
+            pendingPdfUploadFiles = files;
+            showPdfFileList(files);
+        }
+    });
+}
+
+// Handle PDF file selection
+function handlePdfFileSelect(e) {
+    const files = Array.from(e.target.files);
+    if (files.length > 0) {
+        pendingPdfUploadFiles = files;
+        showPdfFileList(files);
+    }
+}
+
+// Show selected PDF files
+function showPdfFileList(files) {
+    const listEl = document.getElementById('pdfFileList');
+    const submitBtn = document.getElementById('uploadPdfSubmitBtn');
+
+    listEl.innerHTML = files.map(f => `
+        <div class="audio-file-item">
+            <span class="audio-file-icon">📄</span>
+            <span class="audio-file-name">${escapeHtml(f.name)}</span>
+            <span class="audio-file-size">${formatFileSize(f.size)}</span>
+        </div>
+    `).join('');
+
+    listEl.style.display = 'block';
+    submitBtn.disabled = false;
+}
+
+// Handle PDF upload (Electron reference-mode add, same pattern as image upload)
+async function handlePdfUpload(e) {
+    e.preventDefault();
+
+    if (!pendingPdfUploadFiles || pendingPdfUploadFiles.length === 0) {
+        showError('No files selected');
+        return;
+    }
+
+    if (pdfUploadInProgress) {
+        showNotification('Upload already in progress...', 'info');
+        return;
+    }
+
+    pdfUploadInProgress = true;
+    const submitBtn = document.getElementById('uploadPdfSubmitBtn');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Uploading...';
+
+    const imageType = document.getElementById('uploadPdfImageType').value;
+    const tags = {};
+    const source = document.getElementById('uploadPdfSource').value;
+    const campaign = document.getElementById('uploadPdfCampaign').value;
+    if (source) tags.Source = source;
+    if (campaign) tags.Campaign = campaign;
+
+    try {
+        showNotification('Adding PDF references...', 'info');
+
+        const filePaths = getFilePaths(pendingPdfUploadFiles);
+        await addPdfReferencesDirectly(filePaths, imageType, tags);
+
+        closeModals();
+        resetPdfUploadModal();
+        loadPdfFiles();
+        loadPdfFilterOptions();
+    } catch (error) {
+        showError('Error uploading PDFs: ' + error.message);
+    } finally {
+        pdfUploadInProgress = false;
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Upload';
+    }
+}
+
+// Add PDF file references by path (Reference Mode)
+async function addPdfReferencesDirectly(filePaths, imageType, tags = {}) {
+    const results = { added: 0, errors: 0, error_files: [] };
+
+    for (const { file, path } of filePaths) {
+        try {
+            const response = await fetch('/api/pdfs/add-reference', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    filepath: path,
+                    image_type: imageType,
+                    ...tags
+                })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                results.added++;
+            } else {
+                results.errors++;
+                results.error_files.push(file.name);
+            }
+        } catch (error) {
+            results.errors++;
+            results.error_files.push(file.name);
+            console.error(`Error adding reference for ${file.name}:`, error);
+        }
+    }
+
+    if (results.added > 0) {
+        showSuccess(`Referenced ${results.added} PDF${results.added !== 1 ? 's' : ''} in place`);
+    }
+    if (results.errors > 0) {
+        showError(`Failed to reference ${results.errors} PDF${results.errors !== 1 ? 's' : ''}: ${results.error_files.join(', ')}`);
+    }
+}
+
+// Reset the PDF upload modal state
+function resetPdfUploadModal() {
+    pendingPdfUploadFiles = null;
+    const listEl = document.getElementById('pdfFileList');
+    const submitBtn = document.getElementById('uploadPdfSubmitBtn');
+    if (listEl) listEl.style.display = 'none';
+    if (submitBtn) submitBtn.disabled = true;
+    const pdfFileInput = document.getElementById('pdfFileInput');
+    if (pdfFileInput) pdfFileInput.value = '';
+    document.getElementById('uploadPdfSource').value = '';
+    document.getElementById('uploadPdfCampaign').value = '';
+}
+
+// Load PDF filter dropdown options (source/campaign)
+async function loadPdfFilterOptions() {
+    try {
+        const sourceSelect = document.getElementById('pdfSourceFilter');
+        const campaignSelect = document.getElementById('pdfCampaignFilter');
+
+        const [sourceRes, campaignRes] = await Promise.all([
+            fetch('/api/pdfs/tags/source'),
+            fetch('/api/pdfs/tags/campaign')
+        ]);
+        const sourceData = await sourceRes.json();
+        const campaignData = await campaignRes.json();
+
+        if (sourceSelect && sourceData.success) {
+            populatePdfFilterSelect(sourceSelect, sourceData.values || [], currentPdfFilters.source);
+        }
+        if (campaignSelect && campaignData.success) {
+            populatePdfFilterSelect(campaignSelect, campaignData.values || [], currentPdfFilters.campaign);
+        }
+    } catch (error) {
+        console.error('Error loading PDF filter options:', error);
+    }
+}
+
+// Populate a simple single-select PDF filter dropdown, preserving its "All ..." first option
+function populatePdfFilterSelect(select, values, currentValue) {
+    const firstOption = select.options[0];
+    select.innerHTML = '';
+    select.appendChild(firstOption);
+    values.forEach(value => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = value;
+        select.appendChild(option);
+    });
+    select.value = currentValue || '';
+}
+
+// Handle PDF search input change
+function handlePdfSearchChange(e) {
+    currentPdfFilters.search = e.target.value;
+    loadPdfFiles();
+}
+
+// Handle PDF image type filter change
+function handlePdfTypeFilterChange(e) {
+    currentPdfFilters.image_type = e.target.value;
+    loadPdfFiles();
+}
+
+// Handle PDF source filter change
+function handlePdfSourceFilterChange(e) {
+    currentPdfFilters.source = e.target.value;
+    loadPdfFiles();
+}
+
+// Handle PDF campaign filter change
+function handlePdfCampaignFilterChange(e) {
+    currentPdfFilters.campaign = e.target.value;
+    loadPdfFiles();
+}
+
+// Handle PDF sort change
+function handlePdfSortChange(e) {
+    currentPdfFilters.sort_by = e.target.value;
+    loadPdfFiles();
+}
+
+// Clear PDF filters
+function clearPdfFilters() {
+    currentPdfFilters = {
+        search: '',
+        image_type: '',
+        source: '',
+        campaign: '',
+        sort_by: 'filename',
+        sort_order: 'ASC'
+    };
+
+    document.getElementById('pdfSearchInput').value = '';
+    document.getElementById('pdfTypeFilter').value = '';
+    document.getElementById('pdfSourceFilter').value = '';
+    document.getElementById('pdfCampaignFilter').value = '';
+    document.getElementById('pdfSortBy').value = 'filename';
+
+    loadPdfFiles();
+}
+
+// Update PDF tab count
+function updatePdfTabCount() {
+    const countEl = document.getElementById('pdfTabCount');
+    if (countEl) {
+        countEl.textContent = pdfFiles.length;
+    }
+}

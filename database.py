@@ -162,6 +162,34 @@ class TokenDatabase:
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_audio_file_hash ON audio_files(file_hash)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_audio_is_missing ON audio_files(is_missing)')
 
+        # Create pdf_files table for PDF management
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS pdf_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                filepath TEXT UNIQUE NOT NULL,
+                filename TEXT NOT NULL,
+                name TEXT,
+                image_type TEXT DEFAULT 'Handout',
+                source TEXT,
+                campaign TEXT,
+                notes TEXT,
+                page_count INTEGER,
+                date_added TEXT,
+                file_modified TEXT,
+                file_hash TEXT,
+                is_missing INTEGER DEFAULT 0,
+                last_verified TEXT
+            )
+        ''')
+
+        # Create indexes for pdf_files
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_pdf_image_type ON pdf_files(image_type)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_pdf_source ON pdf_files(source)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_pdf_campaign ON pdf_files(campaign)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_pdf_filename ON pdf_files(filename)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_pdf_file_hash ON pdf_files(file_hash)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_pdf_is_missing ON pdf_files(is_missing)')
+
     def add_token(self, token_data: Dict) -> Optional[int]:
         """
         Add a new token to the database.
@@ -1403,4 +1431,297 @@ class TokenDatabase:
 
         except Exception as e:
             print(f"Error getting audio stats: {e}")
+            return {}
+
+    def add_pdf_file(self, pdf_data: Dict) -> Optional[int]:
+        """
+        Add a new PDF file to the database.
+
+        Args:
+            pdf_data: Dictionary containing PDF file information
+
+        Returns:
+            PDF file ID if successful, None otherwise
+        """
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+
+                cursor.execute('''
+                    INSERT INTO pdf_files (
+                        filepath, filename, name, image_type, source, campaign, notes,
+                        page_count, date_added, file_modified, file_hash
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    pdf_data.get('filepath'),
+                    pdf_data.get('filename'),
+                    pdf_data.get('Name'),
+                    pdf_data.get('ImageType', 'Handout'),
+                    pdf_data.get('Source'),
+                    pdf_data.get('Campaign'),
+                    pdf_data.get('Notes'),
+                    pdf_data.get('page_count'),
+                    pdf_data.get('DateAdded'),
+                    pdf_data.get('file_modified'),
+                    pdf_data.get('file_hash')
+                ))
+
+                return cursor.lastrowid
+
+        except sqlite3.IntegrityError:
+            # PDF file already exists
+            return None
+        except Exception as e:
+            print(f"Error adding PDF file to database: {e}")
+            return None
+
+    def update_pdf_file(self, pdf_id: int, pdf_data: Dict) -> bool:
+        """
+        Update an existing PDF file.
+
+        Args:
+            pdf_id: ID of the PDF file to update
+            pdf_data: Dictionary containing updated PDF file information
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+
+                cursor.execute('''
+                    UPDATE pdf_files SET
+                        name = ?, image_type = ?, source = ?, campaign = ?, notes = ?,
+                        file_modified = ?
+                    WHERE id = ?
+                ''', (
+                    pdf_data.get('Name'),
+                    pdf_data.get('ImageType', 'Handout'),
+                    pdf_data.get('Source'),
+                    pdf_data.get('Campaign'),
+                    pdf_data.get('Notes'),
+                    pdf_data.get('file_modified'),
+                    pdf_id
+                ))
+
+                return cursor.rowcount > 0
+
+        except Exception as e:
+            print(f"Error updating PDF file: {e}")
+            return False
+
+    def delete_pdf_file(self, pdf_id: int) -> bool:
+        """Delete a PDF file from the database."""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('DELETE FROM pdf_files WHERE id = ?', (pdf_id,))
+                return cursor.rowcount > 0
+
+        except Exception as e:
+            print(f"Error deleting PDF file: {e}")
+            return False
+
+    def get_pdf_file(self, pdf_id: int) -> Optional[Dict]:
+        """Get a single PDF file by ID."""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT * FROM pdf_files WHERE id = ?', (pdf_id,))
+                row = cursor.fetchone()
+
+                if row:
+                    return dict(row)
+                return None
+
+        except Exception as e:
+            print(f"Error getting PDF file: {e}")
+            return None
+
+    def get_pdf_file_by_filepath(self, filepath: str) -> Optional[Dict]:
+        """Get a single PDF file by filepath."""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT * FROM pdf_files WHERE filepath = ?', (filepath,))
+                row = cursor.fetchone()
+
+                if row:
+                    return dict(row)
+                return None
+
+        except Exception as e:
+            print(f"Error getting PDF file by filepath: {e}")
+            return None
+
+    def get_all_pdf_files(self, filters: Optional[Dict] = None, sort_by: str = 'filename',
+                           sort_order: str = 'ASC', search_term: Optional[str] = None) -> List[Dict]:
+        """
+        Get all PDF files with optional filtering and sorting.
+
+        Args:
+            filters: Dictionary of field:value pairs to filter by
+            sort_by: Field to sort by
+            sort_order: 'ASC' or 'DESC'
+            search_term: Optional search term to match against filename, name, notes
+
+        Returns:
+            List of PDF file dictionaries
+        """
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+
+                query = 'SELECT * FROM pdf_files WHERE 1=1'
+                params = []
+
+                # Add search conditions
+                if search_term:
+                    search_pattern = f'%{search_term}%'
+                    query += ''' AND (
+                        filename LIKE ? OR
+                        name LIKE ? OR
+                        notes LIKE ? OR
+                        source LIKE ? OR
+                        campaign LIKE ?
+                    )'''
+                    params.extend([search_pattern] * 5)
+
+                # Add filter conditions
+                if filters:
+                    for field, value in filters.items():
+                        if value:
+                            if isinstance(value, list):
+                                placeholders = ' OR '.join([f'{field} = ?' for _ in value])
+                                query += f' AND ({placeholders})'
+                                params.extend(value)
+                            else:
+                                query += f' AND {field} = ?'
+                                params.append(value)
+
+                # Add sorting
+                valid_sort_fields = ['id', 'filename', 'name', 'image_type',
+                                     'source', 'campaign', 'date_added', 'page_count']
+                if sort_by in valid_sort_fields:
+                    query += f' ORDER BY {sort_by} {sort_order}'
+
+                cursor.execute(query, params)
+                rows = cursor.fetchall()
+
+                return [dict(row) for row in rows]
+
+        except Exception as e:
+            print(f"Error getting all PDF files: {e}")
+            return []
+
+    def get_pdf_tag_values(self, tag_type: str) -> List[str]:
+        """
+        Get all unique values for a specific PDF tag type.
+
+        Args:
+            tag_type: The tag field (image_type, source, campaign)
+
+        Returns:
+            List of unique values
+        """
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+
+                valid_tags = ['image_type', 'source', 'campaign']
+                if tag_type not in valid_tags:
+                    return []
+
+                cursor.execute(f'''
+                    SELECT DISTINCT {tag_type} FROM pdf_files
+                    WHERE {tag_type} IS NOT NULL AND {tag_type} != ''
+                    ORDER BY {tag_type}
+                ''')
+
+                rows = cursor.fetchall()
+                return [row[0] for row in rows]
+
+        except Exception as e:
+            print(f"Error getting PDF tag values: {e}")
+            return []
+
+    def find_pdf_by_hash(self, file_hash: str) -> Optional[Dict]:
+        """Find a PDF file by its file hash."""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT * FROM pdf_files WHERE file_hash = ?', (file_hash,))
+                row = cursor.fetchone()
+
+                if row:
+                    return dict(row)
+                return None
+
+        except Exception as e:
+            print(f"Error finding PDF file by hash: {e}")
+            return None
+
+    def mark_pdf_missing(self, pdf_id: int, is_missing: bool) -> bool:
+        """Update the is_missing flag for a PDF file."""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    'UPDATE pdf_files SET is_missing = ? WHERE id = ?',
+                    (1 if is_missing else 0, pdf_id)
+                )
+                return cursor.rowcount > 0
+
+        except Exception as e:
+            print(f"Error marking PDF file as missing: {e}")
+            return False
+
+    def update_pdf_file_hash(self, pdf_id: int, file_hash: str) -> bool:
+        """Update the file hash for a PDF file."""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    'UPDATE pdf_files SET file_hash = ? WHERE id = ?',
+                    (file_hash, pdf_id)
+                )
+                return cursor.rowcount > 0
+
+        except Exception as e:
+            print(f"Error updating PDF file hash: {e}")
+            return False
+
+    def get_pdf_stats(self) -> Dict:
+        """Get PDF file statistics."""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+
+                cursor.execute('SELECT COUNT(*) FROM pdf_files')
+                total = cursor.fetchone()[0]
+
+                cursor.execute('SELECT SUM(page_count) FROM pdf_files WHERE page_count IS NOT NULL')
+                total_pages = cursor.fetchone()[0] or 0
+
+                stats = {
+                    'total_pdf_files': total,
+                    'total_pages': total_pages,
+                    'image_types': {}
+                }
+
+                # Get counts by image type
+                cursor.execute('''
+                    SELECT image_type, COUNT(*) as count
+                    FROM pdf_files
+                    WHERE image_type IS NOT NULL AND image_type != ''
+                    GROUP BY image_type
+                    ORDER BY count DESC
+                ''')
+                stats['image_types'] = {row[0]: row[1] for row in cursor.fetchall()}
+
+                return stats
+
+        except Exception as e:
+            print(f"Error getting PDF stats: {e}")
             return {}

@@ -444,6 +444,17 @@ def test_upload_single_png(chrome_driver, base_url, sample_png_path, test_db):
 - `GET /api/thumbnail/<id>` - Thumbnail image (150x150)
 - `GET /api/image/<id>` - Full-resolution image
 
+### PDFs (Reference Mode)
+- `GET /api/pdfs` - List with filters (search, image_type, source, campaign, sort_by, sort_order)
+- `GET /api/pdfs/<id>` - Single PDF details
+- `PUT /api/pdfs/<id>` - Update metadata (Name, ImageType, Source, Campaign, Notes)
+- `DELETE /api/pdfs/<id>` - Delete PDF
+- `POST /api/pdfs/add-reference` - Add a PDF by path (Electron Reference Mode)
+- `GET /api/pdf/<id>` - Serve the raw PDF (browser fallback for opening)
+- `GET /api/pdf-thumbnail/<id>` - Cover thumbnail rendered from page 1 (150x150)
+- `GET /api/pdfs/tags/<tag_type>` - Get unique tag values (source, campaign)
+- `GET /api/pdfs/stats` - PDF statistics
+
 ---
 
 ## Deployment Notes

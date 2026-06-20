@@ -12,11 +12,39 @@ import hashlib
 # Supported audio extensions
 AUDIO_EXTENSIONS = {'.mp3', '.wav', '.ogg', '.m4a', '.flac'}
 
+# Supported PDF extensions
+PDF_EXTENSIONS = {'.pdf'}
+
 
 def is_supported_audio(filepath: str) -> bool:
     """Check if file is a supported audio format."""
     lower = filepath.lower()
     return any(lower.endswith(ext) for ext in AUDIO_EXTENSIONS)
+
+
+def is_supported_pdf(filepath: str) -> bool:
+    """Check if file is a PDF."""
+    lower = filepath.lower()
+    return any(lower.endswith(ext) for ext in PDF_EXTENSIONS)
+
+
+def get_pdf_page_count(filepath: str) -> Optional[int]:
+    """
+    Get the page count of a PDF using PyMuPDF.
+
+    Args:
+        filepath: Path to the PDF file
+
+    Returns:
+        Page count, or None on error
+    """
+    try:
+        import fitz
+        with fitz.open(filepath) as doc:
+            return doc.page_count
+    except Exception as e:
+        print(f"Error reading PDF page count for {filepath}: {e}")
+        return None
 
 
 def get_audio_metadata(filepath: str) -> Optional[dict]:
@@ -498,6 +526,219 @@ class TokenScanner:
 
         return results
 
+    # ===== PDF FILE SCANNING METHODS =====
+
+    def find_pdf_files(self) -> List[str]:
+        """
+        Recursively find all PDF files in the token folder.
+
+        Returns:
+            List of absolute file paths (empty if no token_folder configured)
+        """
+        if not self.token_folder:
+            return []
+
+        pdf_files = []
+
+        for root, dirs, files in os.walk(self.token_folder):
+            for file in files:
+                if is_supported_pdf(file):
+                    filepath = os.path.join(root, file)
+                    pdf_files.append(os.path.abspath(filepath))
+
+        return pdf_files
+
+    def scan_pdfs_and_sync(self, progress_callback: Optional[Callable] = None) -> dict:
+        """
+        Scan the token folder for PDF files and sync with the database.
+
+        Args:
+            progress_callback: Optional callback function for progress updates
+
+        Returns:
+            Dictionary with scan results
+        """
+        results = {
+            'added': 0,
+            'updated': 0,
+            'removed': 0,
+            'errors': 0
+        }
+
+        pdf_files = self.find_pdf_files()
+
+        for i, filepath in enumerate(pdf_files):
+            try:
+                if progress_callback:
+                    progress_callback(i + 1, len(pdf_files), filepath)
+
+                filename = os.path.basename(filepath)
+                file_modified = datetime.fromtimestamp(os.path.getmtime(filepath)).isoformat()
+
+                existing = self.database.get_pdf_file_by_filepath(filepath)
+
+                if existing is None:
+                    # New PDF file - add to database
+                    page_count = get_pdf_page_count(filepath)
+
+                    with open(filepath, 'rb') as f:
+                        file_hash = hashlib.sha256(f.read()).hexdigest()
+
+                    pdf_data = {
+                        'filepath': filepath,
+                        'filename': filename,
+                        'Name': os.path.splitext(filename)[0],
+                        'ImageType': 'Handout',  # Default type
+                        'DateAdded': datetime.now().isoformat(),
+                        'file_modified': file_modified,
+                        'file_hash': file_hash,
+                        'page_count': page_count
+                    }
+
+                    if self.database.add_pdf_file(pdf_data):
+                        results['added'] += 1
+                    else:
+                        results['errors'] += 1
+                else:
+                    # Check if file was modified since last scan
+                    if existing['file_modified'] != file_modified:
+                        page_count = get_pdf_page_count(filepath)
+
+                        update_data = {
+                            'file_modified': file_modified,
+                            'page_count': page_count if page_count is not None else existing.get('page_count')
+                        }
+
+                        # Preserve existing tags
+                        for field in ['Name', 'ImageType', 'Source', 'Campaign', 'Notes']:
+                            db_field = field.lower() if field != 'ImageType' else 'image_type'
+                            if existing.get(db_field):
+                                update_data[field] = existing.get(db_field)
+
+                        if self.database.update_pdf_file(existing['id'], update_data):
+                            results['updated'] += 1
+                        else:
+                            results['errors'] += 1
+
+            except Exception as e:
+                print(f"Error processing PDF file {filepath}: {e}")
+                results['errors'] += 1
+
+        return results
+
+    def add_new_pdf_file(self, filepath: str) -> bool:
+        """
+        Add a newly detected PDF file to the database.
+
+        Args:
+            filepath: Path to the new PDF file
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            if not is_supported_pdf(filepath):
+                return False
+
+            filename = os.path.basename(filepath)
+            file_modified = datetime.fromtimestamp(os.path.getmtime(filepath)).isoformat()
+
+            page_count = get_pdf_page_count(filepath)
+
+            with open(filepath, 'rb') as f:
+                file_hash = hashlib.sha256(f.read()).hexdigest()
+
+            pdf_data = {
+                'filepath': filepath,
+                'filename': filename,
+                'Name': os.path.splitext(filename)[0],
+                'ImageType': 'Handout',  # Default type
+                'DateAdded': datetime.now().isoformat(),
+                'file_modified': file_modified,
+                'file_hash': file_hash,
+                'page_count': page_count
+            }
+
+            return self.database.add_pdf_file(pdf_data) is not None
+
+        except Exception as e:
+            print(f"Error adding new PDF file {filepath}: {e}")
+            return False
+
+    def update_existing_pdf_file(self, filepath: str) -> bool:
+        """
+        Update an existing PDF file in the database.
+
+        Args:
+            filepath: Path to the modified PDF file
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            existing = self.database.get_pdf_file_by_filepath(filepath)
+            if not existing:
+                return self.add_new_pdf_file(filepath)
+
+            page_count = get_pdf_page_count(filepath)
+            file_modified = datetime.fromtimestamp(os.path.getmtime(filepath)).isoformat()
+
+            # Preserve existing tags
+            update_data = {
+                'Name': existing.get('name'),
+                'ImageType': existing.get('image_type', 'Handout'),
+                'Source': existing.get('source'),
+                'Campaign': existing.get('campaign'),
+                'Notes': existing.get('notes'),
+                'file_modified': file_modified,
+                'page_count': page_count if page_count is not None else existing.get('page_count')
+            }
+
+            return self.database.update_pdf_file(existing['id'], update_data)
+
+        except Exception as e:
+            print(f"Error updating PDF file {filepath}: {e}")
+            return False
+
+    def verify_all_pdf_references(self) -> dict:
+        """
+        Verify all PDF file references in the database still exist.
+
+        Returns:
+            Dictionary with verification results
+        """
+        results = {
+            'verified': 0,
+            'missing': [],
+            'errors': 0
+        }
+
+        try:
+            all_pdfs = self.database.get_all_pdf_files()
+
+            for pdf in all_pdfs:
+                pdf_id = pdf['id']
+                filepath = pdf['filepath']
+
+                try:
+                    if os.path.exists(filepath) and os.path.isfile(filepath):
+                        self.database.mark_pdf_missing(pdf_id, False)
+                        results['verified'] += 1
+                    else:
+                        self.database.mark_pdf_missing(pdf_id, True)
+                        results['missing'].append(pdf)
+                        print(f"Missing PDF file: {filepath}")
+
+                except Exception as e:
+                    print(f"Error verifying PDF {filepath}: {e}")
+                    results['errors'] += 1
+
+        except Exception as e:
+            print(f"Error during PDF verification: {e}")
+            results['errors'] += 1
+
+        return results
+
 
 class TokenFolderEventHandler(FileSystemEventHandler):
     """Handles file system events for the token folder."""
@@ -526,6 +767,11 @@ class TokenFolderEventHandler(FileSystemEventHandler):
         filepath = os.path.abspath(filepath)
         return is_supported_audio(filepath) and filepath.startswith(self.token_folder)
 
+    def _is_pdf_in_token_folder(self, filepath: str) -> bool:
+        """Check if the file is a PDF in the token folder."""
+        filepath = os.path.abspath(filepath)
+        return is_supported_pdf(filepath) and filepath.startswith(self.token_folder)
+
     def on_created(self, event):
         """Handle file creation events."""
         if event.is_directory:
@@ -542,6 +788,10 @@ class TokenFolderEventHandler(FileSystemEventHandler):
             print(f"New audio file detected: {event.src_path}")
             time.sleep(0.5)
             self.scanner.add_new_audio_file(abs_path)
+        elif self._is_pdf_in_token_folder(event.src_path):
+            print(f"New PDF file detected: {event.src_path}")
+            time.sleep(0.5)
+            self.scanner.add_new_pdf_file(abs_path)
 
     def on_modified(self, event):
         """Handle file modification events."""
@@ -558,6 +808,10 @@ class TokenFolderEventHandler(FileSystemEventHandler):
             print(f"Audio file modified: {event.src_path}")
             time.sleep(0.5)
             self.scanner.update_existing_audio_file(abs_path)
+        elif self._is_pdf_in_token_folder(event.src_path):
+            print(f"PDF file modified: {event.src_path}")
+            time.sleep(0.5)
+            self.scanner.update_existing_pdf_file(abs_path)
 
 
 class TokenFolderWatcher:

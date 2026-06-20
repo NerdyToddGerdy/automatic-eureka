@@ -41,6 +41,20 @@ ipcMain.handle('show-item-in-folder', async (event, filepath) => {
   }
 });
 
+// IPC handler for opening a file with the system default application
+ipcMain.handle('open-file', async (event, filepath) => {
+  try {
+    // shell.openPath() resolves to an error string on failure, '' on success
+    const errorMessage = await shell.openPath(filepath);
+    if (errorMessage) {
+      return { success: false, error: errorMessage };
+    }
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,

@@ -24,6 +24,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   showItemInFolder: (filepath) => ipcRenderer.invoke('show-item-in-folder', filepath),
 
   /**
+   * Open a file with the system default application (e.g. PDFs in Preview/Acrobat)
+   * @param {string} filepath - Absolute path to the file
+   * @returns {Promise<{success: boolean, error?: string}>}
+   */
+  openFile: (filepath) => ipcRenderer.invoke('open-file', filepath),
+
+  /**
    * Flag indicating we're running in Electron
    */
   isElectron: true

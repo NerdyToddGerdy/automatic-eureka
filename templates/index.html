@@ -45,10 +45,15 @@
                 <span class="media-tab-label">Audio</span>
                 <span class="media-tab-count" id="audioTabCount">0</span>
             </button>
+            <button class="media-tab" data-tab="pdfs">
+                <span class="media-tab-icon">📄</span>
+                <span class="media-tab-label">PDFs</span>
+                <span class="media-tab-count" id="pdfTabCount">0</span>
+            </button>
         </div>
 
         <!-- Filters and Search -->
-        <section class="filters">
+        <section id="imageFilters" class="filters">
             <div class="search-box">
                 <input type="text" id="searchInput" placeholder="Search tokens..." />
             </div>
@@ -144,6 +149,47 @@
         <!-- Audio Gallery (hidden by default) -->
         <main id="audioGallery" class="audio-gallery" style="display: none;">
             <!-- Audio files will be inserted here by JavaScript -->
+        </main>
+
+        <!-- PDF Filters (hidden by default) -->
+        <section id="pdfFilters" class="filters" style="display: none;">
+            <div class="search-box">
+                <input type="text" id="pdfSearchInput" placeholder="Search PDFs..." />
+            </div>
+
+            <div class="filter-controls">
+                <select id="pdfTypeFilter" class="filter-select">
+                    <option value="">All Types</option>
+                    <option value="Token">Tokens</option>
+                    <option value="Map">Maps</option>
+                    <option value="Handout">Handouts</option>
+                    <option value="Portrait">Portraits</option>
+                    <option value="Scene">Scenes</option>
+                    <option value="Item">Items</option>
+                </select>
+
+                <select id="pdfSourceFilter" class="filter-select">
+                    <option value="">All Sources</option>
+                </select>
+
+                <select id="pdfCampaignFilter" class="filter-select">
+                    <option value="">All Campaigns</option>
+                </select>
+
+                <select id="pdfSortBy" class="filter-select">
+                    <option value="filename">Sort by Name</option>
+                    <option value="date_added">Sort by Date Added</option>
+                    <option value="image_type">Sort by Type</option>
+                    <option value="page_count">Sort by Page Count</option>
+                </select>
+
+                <button id="clearPdfFiltersBtn" class="btn btn-text">Clear Filters</button>
+            </div>
+        </section>
+
+        <!-- PDF Gallery (hidden by default) -->
+        <main id="pdfGallery" class="token-gallery grid-view" style="display: none;">
+            <!-- PDF files will be inserted here by JavaScript -->
         </main>
 
         <!-- Loading Indicator -->
@@ -949,12 +995,142 @@
         </div>
     </div>
 
+    <!-- PDF Detail Modal -->
+    <div id="pdfModal" class="modal" style="display: none;">
+        <div class="modal-overlay"></div>
+        <div class="modal-content">
+            <button class="modal-close">&times;</button>
+
+            <div class="modal-body">
+                <div class="modal-image">
+                    <img id="pdfModalCover" src="" alt="PDF cover" />
+
+                    <div class="token-metadata">
+                        <p><strong>Filename:</strong> <span id="pdfModalFilename"></span></p>
+                        <p><strong>Pages:</strong> <span id="pdfModalPageCount"></span></p>
+                        <p><strong>Date Added:</strong> <span id="pdfModalDateAdded"></span></p>
+                        <p><strong>File Location:</strong>
+                            <div class="file-path-container">
+                                <a id="pdfModalFilePath" class="file-path-link" href="#" title="Click to copy path">
+                                    <span id="pdfModalFilePathText"></span>
+                                </a>
+                                <button id="pdfShowInFinderBtn" class="show-in-finder-btn" title="Show in Finder" style="display: none;">
+                                    📂 Show in Finder
+                                </button>
+                            </div>
+                        </p>
+                        <button type="button" id="pdfOpenBtn" class="btn btn-secondary">📖 Open PDF</button>
+                    </div>
+                </div>
+
+                <div class="modal-details">
+                    <h2 id="pdfModalTitle">PDF Details</h2>
+
+                    <form id="pdfEditForm" class="token-form">
+                        <input type="hidden" id="editPdfId" />
+
+                        <div class="form-group">
+                            <label for="editPdfName">Display Name</label>
+                            <input type="text" id="editPdfName" class="form-input" />
+                        </div>
+
+                        <div class="form-group">
+                            <label for="editPdfImageType">Image Type</label>
+                            <select id="editPdfImageType" class="form-input">
+                                <option value="Token">Token</option>
+                                <option value="Map">Map</option>
+                                <option value="Handout">Handout</option>
+                                <option value="Portrait">Portrait</option>
+                                <option value="Scene">Scene</option>
+                                <option value="Item">Item</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="editPdfSource">Source</label>
+                            <input type="text" id="editPdfSource" class="form-input" list="sourceList" />
+                        </div>
+
+                        <div class="form-group">
+                            <label for="editPdfCampaign">Campaign</label>
+                            <input type="text" id="editPdfCampaign" class="form-input" list="campaignList" />
+                        </div>
+
+                        <div class="form-group">
+                            <label for="editPdfNotes">Notes</label>
+                            <textarea id="editPdfNotes" class="form-input" rows="3"></textarea>
+                        </div>
+
+                        <div class="form-actions">
+                            <button type="submit" class="btn btn-primary">Save Changes</button>
+                            <button type="button" id="deletePdfBtn" class="btn btn-danger">Delete PDF</button>
+                            <button type="button" class="btn btn-secondary modal-close-btn">Cancel</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- PDF Upload Modal -->
+    <div id="pdfUploadModal" class="modal" style="display: none;">
+        <div class="modal-overlay"></div>
+        <div class="modal-content modal-small">
+            <button class="modal-close">&times;</button>
+
+            <div class="modal-body">
+                <h2>Upload PDFs</h2>
+                <p class="modal-subtitle">Add rulebooks, adventures, and handouts to your vault</p>
+
+                <form id="pdfUploadForm" class="token-form">
+                    <div class="form-group">
+                        <label for="uploadPdfImageType">Image Type</label>
+                        <select id="uploadPdfImageType" class="form-input" required>
+                            <option value="Token">Token</option>
+                            <option value="Map">Map</option>
+                            <option value="Handout" selected>Handout</option>
+                            <option value="Portrait">Portrait</option>
+                            <option value="Scene">Scene</option>
+                            <option value="Item">Item</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="uploadPdfSource">Source</label>
+                        <input type="text" id="uploadPdfSource" class="form-input" list="sourceList" placeholder="Optional" />
+                    </div>
+
+                    <div class="form-group">
+                        <label for="uploadPdfCampaign">Campaign</label>
+                        <input type="text" id="uploadPdfCampaign" class="form-input" list="campaignList" placeholder="Optional" />
+                    </div>
+
+                    <div class="audio-drop-zone" id="pdfDropZone">
+                        <div class="audio-drop-icon">📄</div>
+                        <p>Drop PDF files here or click to browse</p>
+                        <p class="audio-drop-formats">Supported: PDF</p>
+                    </div>
+
+                    <div id="pdfFileList" class="audio-file-list" style="display: none;">
+                        <!-- Selected files will be listed here -->
+                    </div>
+
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary" id="uploadPdfSubmitBtn" disabled>Upload</button>
+                        <button type="button" class="btn btn-secondary modal-close-btn">Cancel</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <!-- File Upload (hidden) -->
     <input type="file" id="fileInput" accept=".png,.jpg,.jpeg,image/png,image/jpeg" multiple style="display: none;" />
     <input type="file" id="folderInput" webkitdirectory directory multiple style="display: none;" />
     <input type="file" id="repairFileInput" accept=".png,.jpg,.jpeg,image/png,image/jpeg" style="display: none;" />
     <input type="file" id="audioFileInput" accept=".mp3,.wav,.ogg,.m4a,.flac,audio/*" multiple style="display: none;" />
     <input type="file" id="imageFileInputSimple" accept=".png,.jpg,.jpeg,image/png,image/jpeg" multiple style="display: none;" />
+    <input type="file" id="pdfFileInput" accept=".pdf,application/pdf" multiple style="display: none;" />
 
     <!-- Toast Notifications -->
     <div id="toastContainer" class="toast-container"></div>

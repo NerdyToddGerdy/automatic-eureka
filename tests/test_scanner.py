@@ -16,6 +16,8 @@ from scanner import (
     TokenFolderWatcher,
     is_supported_audio,
     get_audio_metadata,
+    is_supported_pdf,
+    get_pdf_page_count,
 )
 
 
@@ -32,6 +34,20 @@ def make_png(path, color='red'):
 def make_audio_file(path, content=b'not real audio data'):
     with open(path, 'wb') as f:
         f.write(content)
+
+
+def make_pdf_file(path, content=b'%PDF-1.4 not a real pdf'):
+    with open(path, 'wb') as f:
+        f.write(content)
+
+
+def make_real_pdf(path, page_count=2):
+    import fitz
+    doc = fitz.open()
+    for _ in range(page_count):
+        doc.new_page()
+    doc.save(path)
+    doc.close()
 
 
 class TestIsSupportedAudio:
@@ -52,6 +68,31 @@ class TestGetAudioMetadata:
 
     def test_returns_none_for_missing_file(self, temp_dir):
         assert get_audio_metadata(os.path.join(temp_dir, 'missing.mp3')) is None
+
+
+class TestIsSupportedPdf:
+    @pytest.mark.parametrize('ext', ['.pdf', '.PDF'])
+    def test_supported_extensions(self, ext):
+        assert is_supported_pdf(f'book{ext}') is True
+
+    @pytest.mark.parametrize('ext', ['.png', '.mp3', '.txt', ''])
+    def test_unsupported_extensions(self, ext):
+        assert is_supported_pdf(f'file{ext}') is False
+
+
+class TestGetPdfPageCount:
+    def test_returns_none_for_unparseable_file(self, temp_dir):
+        filepath = os.path.join(temp_dir, 'bad.pdf')
+        make_pdf_file(filepath)
+        assert get_pdf_page_count(filepath) is None
+
+    def test_returns_none_for_missing_file(self, temp_dir):
+        assert get_pdf_page_count(os.path.join(temp_dir, 'missing.pdf')) is None
+
+    def test_returns_count_for_real_pdf(self, temp_dir):
+        filepath = os.path.join(temp_dir, 'real.pdf')
+        make_real_pdf(filepath, page_count=3)
+        assert get_pdf_page_count(filepath) == 3
 
 
 class TestFindImageFiles:
@@ -312,6 +353,108 @@ class TestVerifyAllAudioReferences:
         assert results['missing'][0]['filepath'] == missing_path
 
 
+class TestFindPdfFiles:
+    def test_no_token_folder_returns_empty(self, test_db):
+        scanner = TokenScanner(test_db, token_folder=None)
+        assert scanner.find_pdf_files() == []
+
+    def test_finds_nested_pdfs_ignores_other_extensions(self, scanner, temp_dir):
+        sub = os.path.join(temp_dir, 'sub')
+        os.makedirs(sub)
+        make_pdf_file(os.path.join(temp_dir, 'rules.pdf'))
+        make_pdf_file(os.path.join(sub, 'module.PDF'))
+        make_png(os.path.join(temp_dir, 'art.png'))
+
+        found = scanner.find_pdf_files()
+
+        assert len(found) == 2
+        assert all(os.path.isabs(p) for p in found)
+
+
+class TestScanPdfsAndSync:
+    def test_adds_new_pdf_file(self, scanner, temp_dir):
+        filepath = os.path.join(temp_dir, 'rules.pdf')
+        content = b'fake pdf bytes for hashing'
+        make_pdf_file(filepath, content)
+
+        results = scanner.scan_pdfs_and_sync()
+
+        assert results == {'added': 1, 'updated': 0, 'removed': 0, 'errors': 0}
+        db_row = scanner.database.get_pdf_file_by_filepath(filepath)
+        assert db_row is not None
+        assert db_row['file_hash'] == hashlib.sha256(content).hexdigest()
+        assert db_row['image_type'] == 'Handout'
+        assert db_row['page_count'] is None
+
+    def test_adds_new_pdf_file_with_real_page_count(self, scanner, temp_dir):
+        filepath = os.path.join(temp_dir, 'rules.pdf')
+        make_real_pdf(filepath, page_count=5)
+
+        results = scanner.scan_pdfs_and_sync()
+
+        assert results['added'] == 1
+        db_row = scanner.database.get_pdf_file_by_filepath(filepath)
+        assert db_row['page_count'] == 5
+
+    def test_unmodified_pdf_file_not_recounted(self, scanner, temp_dir):
+        filepath = os.path.join(temp_dir, 'rules.pdf')
+        make_pdf_file(filepath)
+        scanner.scan_pdfs_and_sync()
+
+        results = scanner.scan_pdfs_and_sync()
+
+        assert results == {'added': 0, 'updated': 0, 'removed': 0, 'errors': 0}
+
+    def test_modified_pdf_file_gets_updated(self, scanner, temp_dir):
+        filepath = os.path.join(temp_dir, 'rules.pdf')
+        make_pdf_file(filepath)
+        scanner.scan_pdfs_and_sync()
+
+        time.sleep(0.01)
+        os.utime(filepath, (time.time() + 5, time.time() + 5))
+
+        results = scanner.scan_pdfs_and_sync()
+
+        assert results['updated'] == 1
+        assert results['added'] == 0
+
+
+class TestAddNewPdfFile:
+    def test_success(self, scanner, temp_dir):
+        filepath = os.path.join(temp_dir, 'rules.pdf')
+        content = b'another fake pdf'
+        make_pdf_file(filepath, content)
+
+        assert scanner.add_new_pdf_file(filepath) is True
+        db_row = scanner.database.get_pdf_file_by_filepath(filepath)
+        assert db_row['file_hash'] == hashlib.sha256(content).hexdigest()
+
+    def test_rejects_non_pdf_file(self, scanner, temp_dir):
+        filepath = os.path.join(temp_dir, 'image.png')
+        make_png(filepath)
+        assert scanner.add_new_pdf_file(filepath) is False
+
+
+class TestVerifyAllPdfReferences:
+    def test_empty_database(self, scanner):
+        results = scanner.verify_all_pdf_references()
+        assert results == {'verified': 0, 'missing': [], 'errors': 0}
+
+    def test_existing_and_missing_pdf_files(self, scanner, temp_dir):
+        present_path = os.path.join(temp_dir, 'present.pdf')
+        missing_path = os.path.join(temp_dir, 'missing.pdf')
+        make_pdf_file(present_path)
+        make_pdf_file(missing_path)
+        scanner.scan_pdfs_and_sync()
+        os.remove(missing_path)
+
+        results = scanner.verify_all_pdf_references()
+
+        assert results['verified'] == 1
+        assert len(results['missing']) == 1
+        assert results['missing'][0]['filepath'] == missing_path
+
+
 class TestTokenFolderEventHandlerPathMatching:
     @pytest.fixture
     def handler(self, scanner, temp_dir):
@@ -331,6 +474,12 @@ class TestTokenFolderEventHandlerPathMatching:
 
     def test_audio_outside_folder_does_not_match(self, handler):
         assert handler._is_audio_in_token_folder('/somewhere/else/a.mp3') is False
+
+    def test_pdf_inside_folder_matches(self, handler, temp_dir):
+        assert handler._is_pdf_in_token_folder(os.path.join(temp_dir, 'a.pdf')) is True
+
+    def test_pdf_outside_folder_does_not_match(self, handler):
+        assert handler._is_pdf_in_token_folder('/somewhere/else/a.pdf') is False
 
 
 class TestTokenFolderEventHandlerDispatch:
@@ -392,6 +541,22 @@ class TestTokenFolderEventHandlerDispatch:
         handler.on_modified(event)
 
         update_existing_file.assert_not_called()
+
+    def test_on_created_pdf_calls_add_new_pdf_file(self, handler, temp_dir, mocker):
+        add_new_pdf_file = mocker.patch.object(handler.scanner, 'add_new_pdf_file')
+        event = self.make_event(os.path.join(temp_dir, 'new.pdf'))
+
+        handler.on_created(event)
+
+        add_new_pdf_file.assert_called_once_with(os.path.abspath(event.src_path))
+
+    def test_on_modified_pdf_calls_update_existing_pdf_file(self, handler, temp_dir, mocker):
+        update_existing_pdf_file = mocker.patch.object(handler.scanner, 'update_existing_pdf_file')
+        event = self.make_event(os.path.join(temp_dir, 'existing.pdf'))
+
+        handler.on_modified(event)
+
+        update_existing_pdf_file.assert_called_once_with(os.path.abspath(event.src_path))
 
 
 def mocker_namespace():

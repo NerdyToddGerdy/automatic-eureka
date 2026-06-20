@@ -61,6 +61,9 @@ AUDIO_TAG_SCHEMAS = {
 
 AUDIO_TYPES = ['Music', 'SoundEffect', 'Ambience', 'Dialogue']
 
+# PDF file support
+PDF_EXTENSIONS = {'.pdf'}
+
 # Global objects
 db = None
 scanner = None
@@ -108,6 +111,34 @@ def get_audio_metadata(filepath: str) -> Optional[dict]:
         }
     except Exception as e:
         print(f"Error reading audio metadata for {filepath}: {e}")
+        return None
+
+
+def is_supported_pdf(filepath: str) -> bool:
+    """Check if file is a PDF."""
+    lower = filepath.lower()
+    return any(lower.endswith(ext) for ext in PDF_EXTENSIONS)
+
+
+def get_pdf_metadata(filepath: str) -> Optional[dict]:
+    """
+    Get PDF metadata using PyMuPDF.
+
+    Args:
+        filepath: Path to the PDF file
+
+    Returns:
+        Dictionary with page_count and file_size, or None on error
+    """
+    try:
+        import fitz
+        with fitz.open(filepath) as doc:
+            return {
+                'page_count': doc.page_count,
+                'file_size': os.path.getsize(filepath)
+            }
+    except Exception as e:
+        print(f"Error reading PDF metadata for {filepath}: {e}")
         return None
 
 
@@ -204,6 +235,31 @@ def generate_thumbnail_in_memory(filepath: str, size: tuple = (150, 150)) -> Opt
 
     except Exception as e:
         print(f"Error generating in-memory thumbnail for {filepath}: {e}")
+        return None
+
+
+def generate_pdf_thumbnail_in_memory(filepath: str, size: tuple = (150, 150)) -> Optional[bytes]:
+    """Render page 1 of a PDF to a thumbnail in-memory and return as PNG bytes."""
+    try:
+        import fitz
+        from io import BytesIO
+
+        with fitz.open(filepath) as doc:
+            page = doc.load_page(0)
+            zoom = 96 / 72
+            pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
+
+            img = Image.open(BytesIO(pix.tobytes('png')))
+            img.thumbnail(size, Image.Resampling.LANCZOS)
+
+            buffer = BytesIO()
+            img.save(buffer, format='PNG', optimize=True)
+            buffer.seek(0)
+
+            return buffer.getvalue()
+
+    except Exception as e:
+        print(f"Error generating PDF thumbnail for {filepath}: {e}")
         return None
 
 
@@ -1200,6 +1256,7 @@ def rescan():
         # Fall back to local scanner
         print("Starting local folder scan...")
         results = scanner.scan_and_sync()
+        scanner.scan_pdfs_and_sync()
         return jsonify({
             'success': True,
             'results': results,
@@ -1762,6 +1819,262 @@ def get_audio_stats():
     """Get audio file statistics."""
     try:
         stats = db.get_audio_stats()
+        return jsonify({'success': True, 'stats': stats})
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ===== PDF FILE ENDPOINTS =====
+
+@app.route('/api/pdfs', methods=['GET'])
+def get_pdf_files():
+    """
+    Get all PDF files with optional filtering and sorting.
+
+    Query parameters:
+        - image_type: Filter by image type
+        - source: Filter by source
+        - campaign: Filter by campaign
+        - search: Search term for name/filename/notes
+        - sort_by: Field to sort by (default: filename)
+        - sort_order: ASC or DESC (default: ASC)
+    """
+    try:
+        search = request.args.get('search')
+        sort_by = request.args.get('sort_by', 'filename')
+        sort_order = request.args.get('sort_order', 'ASC')
+
+        filters = {}
+        for field in ['image_type', 'source', 'campaign']:
+            value = request.args.get(field)
+            if value:
+                filters[field] = value
+
+        pdf_files = db.get_all_pdf_files(
+            filters=filters,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            search_term=search
+        )
+
+        return jsonify({
+            'success': True,
+            'pdf_files': pdf_files,
+            'count': len(pdf_files)
+        })
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/pdfs/<int:pdf_id>', methods=['GET'])
+def get_pdf_file(pdf_id):
+    """Get a single PDF file by ID."""
+    try:
+        pdf = db.get_pdf_file(pdf_id)
+
+        if pdf:
+            return jsonify({'success': True, 'pdf': pdf})
+        else:
+            return jsonify({'success': False, 'error': 'PDF file not found'}), 404
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/pdfs/<int:pdf_id>', methods=['PUT'])
+def update_pdf_file(pdf_id):
+    """Update a PDF file's metadata."""
+    try:
+        data = request.get_json()
+
+        pdf = db.get_pdf_file(pdf_id)
+        if not pdf:
+            return jsonify({'success': False, 'error': 'PDF file not found'}), 404
+
+        update_data = {}
+        for field in ['Name', 'ImageType', 'Source', 'Campaign', 'Notes']:
+            if field in data:
+                update_data[field] = data[field]
+
+        if update_data:
+            if not db.update_pdf_file(pdf_id, update_data):
+                return jsonify({'success': False, 'error': 'Failed to update PDF file'}), 500
+
+            updated_pdf = db.get_pdf_file(pdf_id)
+            return jsonify({'success': True, 'pdf': updated_pdf})
+        else:
+            return jsonify({'success': False, 'error': 'No fields to update'}), 400
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/pdfs/<int:pdf_id>', methods=['DELETE'])
+def delete_pdf_file(pdf_id):
+    """Delete a PDF file and its record."""
+    try:
+        pdf = db.get_pdf_file(pdf_id)
+        if not pdf:
+            return jsonify({'success': False, 'error': 'PDF file not found'}), 404
+
+        if os.path.exists(pdf['filepath']):
+            os.remove(pdf['filepath'])
+
+        if db.delete_pdf_file(pdf_id):
+            return jsonify({'success': True})
+        else:
+            return jsonify({'success': False, 'error': 'Failed to delete from database'}), 500
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/pdf/<int:pdf_id>', methods=['GET'])
+def serve_pdf(pdf_id):
+    """Serve a PDF file directly (browser fallback for opening PDFs)."""
+    try:
+        pdf = db.get_pdf_file(pdf_id)
+        if not pdf:
+            return jsonify({'success': False, 'error': 'PDF file not found'}), 404
+
+        filepath = pdf['filepath']
+        if not os.path.exists(filepath):
+            return jsonify({'success': False, 'error': 'PDF file not found on disk'}), 404
+
+        return send_file(filepath, mimetype='application/pdf')
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/pdf-thumbnail/<int:pdf_id>', methods=['GET'])
+def get_pdf_thumbnail(pdf_id):
+    """Generate and return a PDF cover thumbnail on-demand."""
+    try:
+        pdf = db.get_pdf_file(pdf_id)
+        if not pdf:
+            return jsonify({'success': False, 'error': 'PDF file not found'}), 404
+
+        filepath = pdf['filepath']
+        if not os.path.exists(filepath):
+            return jsonify({'success': False, 'error': 'PDF file not found on disk'}), 404
+
+        thumbnail_bytes = generate_pdf_thumbnail_in_memory(
+            filepath,
+            tuple(config.get('thumbnail_size', [150, 150]))
+        )
+
+        if thumbnail_bytes is None:
+            return jsonify({'success': False, 'error': 'Failed to generate thumbnail'}), 500
+
+        return send_file(
+            io.BytesIO(thumbnail_bytes),
+            mimetype='image/png',
+            as_attachment=False,
+            download_name=f'pdf_thumbnail_{pdf_id}.png'
+        )
+
+    except Exception as e:
+        print(f"Error generating PDF thumbnail: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/pdfs/tags/<tag_type>', methods=['GET'])
+def get_pdf_tag_values_endpoint(tag_type):
+    """Get unique tag values for PDF files."""
+    try:
+        values = db.get_pdf_tag_values(tag_type)
+        return jsonify({'success': True, 'values': values})
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/pdfs/add-reference', methods=['POST'])
+def add_pdf_file_reference():
+    """Add a PDF file reference without copying the file."""
+    try:
+        data = request.get_json()
+        filepath = data.get('filepath')
+        overwrite_existing = data.get('overwrite_existing', False)
+        image_type = data.get('image_type', 'Handout')
+
+        if image_type not in IMAGE_TYPES:
+            image_type = 'Handout'
+
+        tag_fields = ['Source', 'Campaign']
+        tag_values = {}
+        for tag_field in tag_fields:
+            value = data.get(tag_field)
+            if value:
+                tag_values[tag_field] = value
+
+        if not filepath:
+            return jsonify({'success': False, 'error': 'No filepath provided'}), 400
+
+        if not os.path.exists(filepath):
+            return jsonify({'success': False, 'error': 'File not found'}), 404
+
+        if not is_supported_pdf(filepath):
+            return jsonify({'success': False, 'error': 'Unsupported file format'}), 400
+
+        with open(filepath, 'rb') as f:
+            file_hash = hashlib.sha256(f.read()).hexdigest()
+
+        existing = db.find_pdf_by_hash(file_hash)
+
+        if existing and not overwrite_existing:
+            return jsonify({
+                'success': False,
+                'error': 'Duplicate file exists',
+                'existing_pdf': existing
+            }), 409
+
+        pdf_meta = get_pdf_metadata(filepath)
+
+        pdf_data = {
+            'filepath': filepath,
+            'filename': os.path.basename(filepath),
+            'Name': os.path.splitext(os.path.basename(filepath))[0],
+            'ImageType': image_type,
+            'DateAdded': datetime.now().isoformat(),
+            'file_modified': datetime.fromtimestamp(os.path.getmtime(filepath)).isoformat(),
+            'file_hash': file_hash,
+            'page_count': pdf_meta.get('page_count') if pdf_meta else None
+        }
+        pdf_data.update(tag_values)
+
+        if overwrite_existing and existing:
+            success = db.update_pdf_file(existing['id'], pdf_data)
+            pdf_id = existing['id']
+        else:
+            pdf_id = db.add_pdf_file(pdf_data)
+            success = pdf_id is not None
+
+        if success:
+            if pdf_id:
+                db.update_pdf_file_hash(pdf_id, file_hash)
+                db.mark_pdf_missing(pdf_id, False)
+
+            return jsonify({
+                'success': True,
+                'pdf_id': pdf_id,
+                'message': 'PDF file reference added successfully'
+            })
+        else:
+            return jsonify({'success': False, 'error': 'Failed to add PDF file reference'}), 500
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/pdfs/stats', methods=['GET'])
+def get_pdf_stats():
+    """Get PDF file statistics."""
+    try:
+        stats = db.get_pdf_stats()
         return jsonify({'success': True, 'stats': stats})
 
     except Exception as e:
