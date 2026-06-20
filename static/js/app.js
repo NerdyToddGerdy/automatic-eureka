@@ -93,6 +93,9 @@ function updateModeIndicator() {
 const tokenGallery = document.getElementById('tokenGallery');
 const loadingIndicator = document.getElementById('loadingIndicator');
 const emptyState = document.getElementById('emptyState');
+const emptyStateTitle = document.getElementById('emptyStateTitle');
+const emptyStateMessage = document.getElementById('emptyStateMessage');
+const emptyStateClearFiltersBtn = document.getElementById('emptyStateClearFiltersBtn');
 const tokenCount = document.getElementById('tokenCount');
 const searchInput = document.getElementById('searchInput');
 const imageTypeFilter = document.getElementById('imageTypeFilter');
@@ -705,6 +708,7 @@ function setupEventListeners() {
 
     // Clear filters
     document.getElementById('clearFiltersBtn').addEventListener('click', clearFilters);
+    emptyStateClearFiltersBtn.addEventListener('click', clearFilters);
 
     // View toggle
     gridViewBtn.addEventListener('click', () => setView('grid'));
@@ -909,11 +913,26 @@ function populateFilter(filterType, values) {
     });
 }
 
+// Whether any search/filter is currently narrowing the image gallery
+function hasActiveFilters() {
+    return !!(currentFilters.search || currentFilters.image_type || currentFilters.species ||
+        currentFilters.class || currentFilters.theme || currentFilters.source || currentFilters.campaign);
+}
+
 // Render tokens to the gallery
 function renderTokens() {
     tokenGallery.innerHTML = '';
 
     if (filteredTokens.length === 0) {
+        if (hasActiveFilters()) {
+            emptyStateTitle.textContent = 'No Matches Found';
+            emptyStateMessage.textContent = 'No images match your current search or filters.';
+            emptyStateClearFiltersBtn.style.display = 'inline-block';
+        } else {
+            emptyStateTitle.textContent = 'No Tokens Found';
+            emptyStateMessage.textContent = 'Upload some PNG tokens to get started!';
+            emptyStateClearFiltersBtn.style.display = 'none';
+        }
         emptyState.style.display = 'block';
         return;
     }
