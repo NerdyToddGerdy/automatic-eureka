@@ -4,7 +4,7 @@ Tests TokenDatabase CRUD operations, querying, filtering, and statistics.
 """
 import pytest
 from datetime import datetime
-from database import TokenDatabase
+from database import TokenDatabase, EMPTY_FIELD_SENTINEL
 
 
 class TestDatabaseInitialization:
@@ -324,6 +324,49 @@ class TestGetAllTokens:
         assert tokens[0]['filename'] == 'c.png'
         assert tokens[1]['filename'] == 'b.png'
         assert tokens[2]['filename'] == 'a.png'
+
+
+class TestGetAllTokensWithMultiFiltersEmptySentinel:
+    """Tests for the (Untagged) empty-field filter on get_all_tokens_with_multi_filters."""
+
+    def _make_tokens(self, test_db):
+        test_db.add_token({'filepath': '/test/a.png', 'filename': 'a.png', 'Species': 'Orc'})
+        test_db.add_token({'filepath': '/test/b.png', 'filename': 'b.png'})  # no species
+        test_db.add_token({'filepath': '/test/c.png', 'filename': 'c.png', 'Species': 'Elf'})
+
+    def test_single_sentinel_matches_only_empty(self, test_db):
+        """A bare sentinel value should match only tokens with no species set."""
+        self._make_tokens(test_db)
+
+        tokens = test_db.get_all_tokens_with_multi_filters(filters={'species': EMPTY_FIELD_SENTINEL})
+
+        assert [t['filename'] for t in tokens] == ['b.png']
+
+    def test_list_sentinel_matches_only_empty(self, test_db):
+        """A single-item list sentinel should behave the same as the bare value."""
+        self._make_tokens(test_db)
+
+        tokens = test_db.get_all_tokens_with_multi_filters(filters={'species': [EMPTY_FIELD_SENTINEL]})
+
+        assert [t['filename'] for t in tokens] == ['b.png']
+
+    def test_sentinel_mixed_with_real_value(self, test_db):
+        """Sentinel and a real value in the same OR list should match both."""
+        self._make_tokens(test_db)
+
+        tokens = test_db.get_all_tokens_with_multi_filters(
+            filters={'species': [EMPTY_FIELD_SENTINEL, 'Orc']}
+        )
+
+        assert sorted(t['filename'] for t in tokens) == ['a.png', 'b.png']
+
+    def test_normal_filtering_unaffected(self, test_db):
+        """Filtering by a real value should be unaffected by the sentinel handling."""
+        self._make_tokens(test_db)
+
+        tokens = test_db.get_all_tokens_with_multi_filters(filters={'species': 'Elf'})
+
+        assert [t['filename'] for t in tokens] == ['c.png']
 
 
 class TestSearchTokens:
@@ -761,6 +804,24 @@ class TestGetAllPdfFiles:
 
         pdfs = test_db.get_all_pdf_files(search_term='HANDBOOK')
         assert len(pdfs) == 1
+
+    def test_empty_sentinel_matches_only_missing_source(self, test_db):
+        """The (Untagged) sentinel should match only PDFs with no source set."""
+        test_db.add_pdf_file({'filepath': '/test/a.pdf', 'filename': 'a.pdf', 'Source': 'Core'})
+        test_db.add_pdf_file({'filepath': '/test/b.pdf', 'filename': 'b.pdf'})  # no source
+
+        pdfs = test_db.get_all_pdf_files(filters={'source': EMPTY_FIELD_SENTINEL})
+
+        assert [p['filename'] for p in pdfs] == ['b.pdf']
+
+    def test_normal_source_filtering_unaffected(self, test_db):
+        """Filtering by a real source value should be unaffected by the sentinel handling."""
+        test_db.add_pdf_file({'filepath': '/test/a.pdf', 'filename': 'a.pdf', 'Source': 'Core'})
+        test_db.add_pdf_file({'filepath': '/test/b.pdf', 'filename': 'b.pdf'})  # no source
+
+        pdfs = test_db.get_all_pdf_files(filters={'source': 'Core'})
+
+        assert [p['filename'] for p in pdfs] == ['a.pdf']
 
 
 class TestGetPdfTagValues:

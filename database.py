@@ -3,6 +3,12 @@ from typing import Dict, List, Optional
 from contextlib import contextmanager
 import os
 
+# Sentinel filter value meaning "this field is empty/NULL", used by
+# get_all_tokens_with_multi_filters() and get_all_pdf_files() so the UI can
+# offer an "(Untagged)" option alongside real tag values. Must match the
+# matching constant in static/js/app.js.
+EMPTY_FIELD_SENTINEL = '__EMPTY__'
+
 
 class TokenDatabase:
     """Handles SQLite database operations for token inventory."""
@@ -501,10 +507,19 @@ class TokenDatabase:
                     for field, value in filters.items():
                         if value:
                             if isinstance(value, list):
-                                # Multi-value filter: match if ANY value matches (OR logic)
-                                placeholders = ' OR '.join([f'{field} = ?' for _ in value])
-                                query += f' AND ({placeholders})'
-                                params.extend(value)
+                                # Multi-value filter: match if ANY value matches (OR logic).
+                                # EMPTY_FIELD_SENTINEL matches an empty/NULL field instead of
+                                # binding it as a literal value.
+                                conditions = []
+                                for v in value:
+                                    if v == EMPTY_FIELD_SENTINEL:
+                                        conditions.append(f"({field} IS NULL OR {field} = '')")
+                                    else:
+                                        conditions.append(f'{field} = ?')
+                                        params.append(v)
+                                query += f' AND ({" OR ".join(conditions)})'
+                            elif value == EMPTY_FIELD_SENTINEL:
+                                query += f" AND ({field} IS NULL OR {field} = '')"
                             else:
                                 # Single value filter
                                 query += f' AND {field} = ?'
@@ -1593,9 +1608,18 @@ class TokenDatabase:
                     for field, value in filters.items():
                         if value:
                             if isinstance(value, list):
-                                placeholders = ' OR '.join([f'{field} = ?' for _ in value])
-                                query += f' AND ({placeholders})'
-                                params.extend(value)
+                                # EMPTY_FIELD_SENTINEL matches an empty/NULL field instead of
+                                # binding it as a literal value.
+                                conditions = []
+                                for v in value:
+                                    if v == EMPTY_FIELD_SENTINEL:
+                                        conditions.append(f"({field} IS NULL OR {field} = '')")
+                                    else:
+                                        conditions.append(f'{field} = ?')
+                                        params.append(v)
+                                query += f' AND ({" OR ".join(conditions)})'
+                            elif value == EMPTY_FIELD_SENTINEL:
+                                query += f" AND ({field} IS NULL OR {field} = '')"
                             else:
                                 query += f' AND {field} = ?'
                                 params.append(value)
