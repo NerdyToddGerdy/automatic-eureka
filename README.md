@@ -1,39 +1,29 @@
 # Image Vault
 
-> A local-first image organizer for tabletop RPG players that stores metadata directly in your PNG files—so your tags go wherever your images go.
+> A local-first asset organizer for tabletop RPG players that stores metadata directly in your image files—so your tags go wherever your images go.
 
-A hybrid web/desktop application for managing your collection of RPG character images. Perfect for D&D, Pathfinder, and other tabletop RPG players and DMs.
+A desktop application for managing your collection of RPG assets: character tokens, maps, handouts, portraits, scene art, items, music, sound effects, and rulebook PDFs. Perfect for D&D, Pathfinder, and other tabletop RPG players and DMs.
 
 <!-- Add a screenshot: ![Image Vault Screenshot](docs/screenshot.png) -->
 
-## 🎯 Two Ways to Run
-
-**🖥️ Desktop App (NEW v2.0)** - Recommended
-- Files stay in their original location (no copying)
-- Run as native desktop application
-- Perfect for large collections organized in custom folders
-
-**🌐 Web App** - Traditional
-- Files copied to vault folder
-- Run in web browser
-- Great for centralized collections
-
 ## Features
 
-- **Desktop & Web Modes**: Run as Electron app (reference files) or web app (copy files)
-- **PNG Metadata Storage**: Tags are stored directly in PNG files (no external database dependency)
-- **Multiple Image Types**: Token, Map, Handout, Portrait, Scene, Item with type-specific tags
-- **Visual Gallery**: Browse images in grid or list view
-- **Advanced Tagging**: Dynamic tag schemas per image type, global Source/Campaign tags
-- **Search & Filter**: Quickly find images with powerful filtering
-- **Bulk Operations**: Update or delete multiple images at once
-- **Duplicate Detection**: Smart handling with rename/skip/overwrite options
-- **Auto-Scan**: Automatically detects new files in your folder
-- **Dark Fantasy Theme**: Beautiful dark UI with gold accents
+- **Reference Mode**: Files stay exactly where they already live on disk — nothing is copied or moved. Point the app at your existing folders and it indexes them in place.
+- **Three Content Types**: Tokens/Images (PNG, JPG), Audio (MP3, WAV, OGG, M4A, FLAC), and PDFs, each with their own gallery tab.
+- **Metadata Stored in the File Itself**: For PNG and JPEG images, tags are written directly into the image file (PNG text chunks / JPEG EXIF) — no external database dependency. Audio and PDF tags are stored in the local index only (their file formats aren't used as a metadata carrier).
+- **Multiple Image Types**: Token, Map, Handout, Portrait, Scene, Item — each with its own type-specific tag fields.
+- **Visual Gallery**: Browse images in grid or list view; audio and PDFs get their own list views.
+- **Advanced Tagging**: Dynamic tag schemas per content type, plus global Source/Campaign tags shared across everything.
+- **Search & Filter**: Quickly find assets with powerful per-field filtering.
+- **Bulk Operations**: Update or delete multiple items at once.
+- **Tag Manager**: Rename or merge a tag value across every item that uses it, in one operation.
+- **Duplicate Detection**: Smart handling with rename/skip/overwrite options.
+- **Auto-Scan**: Detects new files in your watched folders automatically (or trigger a manual rescan).
+- **Dark Fantasy Theme**: Dark UI with gold accents, accessible focus states, and reduced-motion support.
 
 ## Installation
 
-### For Desktop App (Recommended)
+**Prerequisites**: Python 3.10+, Node.js 18+
 
 1. Install Python dependencies:
 ```bash
@@ -45,75 +35,56 @@ pip install -r requirements.txt
 npm install
 ```
 
-3. Run as desktop app:
+3. Run the desktop app:
 ```bash
 npm start
 ```
 
-The Electron app will launch with Flask running in the background. You'll see a green "📌 Reference Mode" indicator showing files will be referenced in place.
+The Electron app will launch with Flask running in the background. You'll see a green "📌 Reference Mode" indicator confirming files are referenced in place, not copied.
 
-### For Web App (Traditional)
-
-1. Install Python dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-2. Run the Flask server:
-```bash
-python3 app.py
-```
-
-3. Open your browser to: http://127.0.0.1:5000
-
-You'll see a yellow "📁 Copy Mode" indicator showing files will be copied to the vault.
+> **Why Electron, not just a browser?** Image Vault only supports Reference Mode now — there's no "copy files into a vault folder" mode anymore. Adding files by path requires the absolute file-system paths that only Electron's bridge can provide; a plain browser can't do this, and the legacy browser-upload API routes are intentionally disabled. Running `python3 app.py` directly (without Electron) still works for development and for browsing/editing whatever is already indexed, but you can't add new files through the UI that way.
 
 ## Usage
 
-### Mode Differences
+### Adding Content
 
-**Desktop App (Reference Mode):**
-- Browse/Drag-Drop files → Referenced at original location
-- No files copied, no storage duplication
-- Organize images in your own folder structure
-- Database tracks original file paths
+- **Add Files** (header button) — pick individual images, audio files, or PDFs by path.
+- **Import Folder** — point at a folder (optionally recursive) and the scanner indexes every supported file inside it, prompting for tags per type/subfolder along the way.
+- **Drag and drop** — drop files or a folder directly onto the gallery.
+- **Rescan** — re-index your watched folders manually at any time; this also catches files that moved or were deleted outside the app.
 
-**Web App (Copy Mode):**
-- Browse/Drag-Drop files → Copied to `tokens` folder
-- Traditional centralized storage
-- All files in one location
+### Organizing
 
-**Both Modes:**
-- Import Folder feature works the same way
-- Metadata written to original PNG files
-- Same filtering, tagging, and search features
-
-### First Time Setup
-
-1. The app will create a `tokens` folder in the project directory
-2. Add your PNG token images to this folder
-3. The app will automatically scan and index them
-
-### Adding Tokens
-
-- **Upload**: Click "Upload Tokens" button and select PNG files
-- **Drop Files**: Copy PNG files directly into the `tokens` folder
-
-### Organizing Tokens
-
-- Click on any token to view details and edit metadata
-- Use filters to narrow down your collection
-- Select multiple tokens for bulk operations
-- All metadata is saved directly in the PNG files
+- Click any item to view details and edit its metadata.
+- Use the filter bar to narrow down by type, tag value, source, or campaign.
+- Select multiple items (checkbox on each card) for bulk tag edits or deletes.
+- Use **Manage Tags** to rename or merge a tag value everywhere it's used — e.g. fixing a typo'd Campaign name across 40 tokens in one go.
 
 ### Metadata Fields
 
-- **Display Name**: Custom name (separate from filename)
-- **Species**: Human, Elf, Dwarf, Orc, etc.
-- **Class**: Fighter, Wizard, Rogue, etc.
-- **Source**: Hero Forge, Custom, PHB, etc.
-- **Campaign**: Curse of Strahd, Homebrew, etc.
-- **Notes**: Custom description
+Image types each have their own tag schema, plus shared **Source** and **Campaign** fields:
+
+| Image Type | Type-specific fields |
+|---|---|
+| Token | Species, Class |
+| Map | Scale, Theme |
+| Handout | Type |
+| Portrait | Subject, Style |
+| Scene | Location, Mood |
+| Item | Rarity, Category, Attunement |
+
+Audio types follow the same pattern:
+
+| Audio Type | Type-specific fields |
+|---|---|
+| Music | Genre, Mood |
+| SoundEffect | Intensity, Location |
+| Ambience | Mood, Intensity, Location |
+| Dialogue | Character |
+
+PDFs currently support **Source** and **Campaign** only (no type-specific schema).
+
+Every item also has a **Display Name** (independent of filename) and free-text **Notes**.
 
 ## Configuration
 
@@ -121,13 +92,14 @@ Edit `config.json` to customize:
 
 ```json
 {
-  "token_folder": "./tokens",
   "thumbnail_size": [150, 150],
   "watch_folder": true,
   "port": 5000,
   "host": "127.0.0.1"
 }
 ```
+
+There's no fixed "token folder" setting — Reference Mode tracks each item's own original file path individually, so your assets can live anywhere on disk, across as many folders as you like.
 
 ## Command Line Options
 
@@ -138,7 +110,7 @@ python3 app.py --port 8080
 # Use a custom config file
 python3 app.py --config /path/to/config.json
 
-# Bind to different host
+# Bind to a different host
 python3 app.py --host 0.0.0.0
 ```
 
@@ -163,87 +135,96 @@ The packaged apps will be in the `dist/` folder. These are standalone applicatio
 
 ```
 image-vault/
-├── app.py                 # Main Flask application
-├── database.py            # SQLite operations
-├── metadata.py            # PNG metadata read/write
-├── scanner.py             # Folder scanning and watching
-├── config.json            # Configuration
-├── requirements.txt       # Python dependencies
-├── package.json           # Node/Electron config
-├── electron/              # Electron app files
-│   ├── main.js            # Electron main process
-│   └── preload.js         # Secure bridge script
+├── app.py                 # Main Flask application & API routes
+├── database.py            # SQLite operations (tokens, audio_files, pdf_files tables)
+├── metadata.py            # PNG/JPEG metadata read/write (source of truth for images)
+├── scanner.py             # Folder scanning, file-type detection, and watching
+├── cache.py                # In-memory thumbnail cache
+├── file_utils.py          # File hashing, timeout-bounded file I/O, duplicate detection
+├── config.json             # Configuration
+├── requirements.txt        # Python dependencies
+├── package.json            # Node/Electron config
+├── electron/
+│   ├── main.js             # Electron main process
+│   └── preload.js          # Secure bridge script (file dialogs, "show in folder", etc.)
 ├── static/
-│   ├── css/
-│   │   └── style.css      # Dark fantasy theme
-│   └── js/
-│       └── app.js         # Frontend logic
+│   ├── css/style.css       # Dark fantasy theme
+│   ├── js/app.js           # Frontend logic (single-page app, no framework)
+│   └── img/                # Static image assets
 ├── templates/
-│   └── index.html         # Main page template
-├── tokens/                # Token storage folder
-├── thumbnails/            # Generated thumbnails cache
-└── tokens.db              # SQLite index database
+│   └── index.html          # Main page template
+├── tests/                  # Unit tests + Playwright E2E tests (tests/chrome/)
+├── tokens/                 # Legacy folder, unused in Reference Mode (gitignored)
+├── thumbnails/             # Generated thumbnail cache (gitignored)
+└── tokens.db                # SQLite index database (gitignored)
 ```
 
 ## API Endpoints
 
-- `GET /api/tokens` - List all tokens (with filters)
-- `GET /api/tokens/<id>` - Get single token
-- `PUT /api/tokens/<id>` - Update token metadata
-- `DELETE /api/tokens/<id>` - Delete token
-- `POST /api/tokens/upload` - Upload new tokens
-- `POST /api/tokens/bulk-update` - Update multiple tokens
-- `POST /api/tokens/bulk-delete` - Delete multiple tokens
-- `GET /api/tags/<type>` - Get all values for a tag type
-- `POST /api/scan` - Manually rescan token folder
-- `GET /api/stats` - Get database statistics
-- `GET /api/thumbnail/<id>` - Get token thumbnail
-- `GET /api/image/<id>` - Get full-size image
+**Tokens/Images**
+- `GET /api/tokens` — List with filters (search, image_type, species, class, source, campaign, sort)
+- `GET /api/tokens/<id>` / `PUT /api/tokens/<id>` / `DELETE /api/tokens/<id>`
+- `POST /api/tokens/add-reference` — Add a single file by path
+- `POST /api/tokens/add-references-batch` — Add multiple files by path
+- `POST /api/tokens/scan-folder` — Scan a folder (with subfolder support) for files to add
+- `POST /api/tokens/bulk-update` / `POST /api/tokens/bulk-delete`
+- `GET /api/thumbnail/<id>` / `GET /api/image/<id>`
+
+**Audio**
+- `GET /api/audio` — List with filters
+- `GET /api/audio/<id>` / `PUT /api/audio/<id>` / `DELETE /api/audio/<id>`
+- `POST /api/audio/add-reference`
+- `GET /api/audio/stream/<id>` — Stream audio for playback
+
+**PDFs**
+- `GET /api/pdfs` — List with filters
+- `GET /api/pdfs/<id>` / `PUT /api/pdfs/<id>` / `DELETE /api/pdfs/<id>`
+- `POST /api/pdfs/add-reference`
+- `GET /api/pdf/<id>` — Serve the raw PDF
+- `GET /api/pdf-thumbnail/<id>` — Cover thumbnail rendered from page 1
+
+**Shared**
+- `GET /api/tags/<type>` — Get distinct values for a tag field
+- `GET /api/tags/<field>/manage` / `PUT /api/tags/<field>/rename` — Tag Manager (merge/rename)
+- `POST /api/scan` — Manually rescan watched folders
+- `GET /api/stats` — Database statistics
 
 ## How It Works
 
-### PNG as Source of Truth
+### Images: File as Source of Truth
 
-Image Vault stores all metadata directly in PNG files using standard PNG text chunks. The SQLite database is only an index for faster searching - the PNG files are the source of truth.
+For PNG and JPEG tokens, metadata is stored directly in the image file — PNG text chunks for PNGs, EXIF UserComment (as JSON) for JPEGs. The SQLite database is only an index for faster searching; the image files are the source of truth. Audio and PDF formats aren't used this way — their tags live in the database only.
 
-Metadata keys used:
-- `ImageVault:Name`
-- `ImageVault:Species`
-- `ImageVault:Class`
-- `ImageVault:Source`
-- `ImageVault:Campaign`
-- `ImageVault:Notes`
-- `ImageVault:DateAdded`
+PNG metadata keys used (prefixed `ImageVault:`, with backward-compatible support for the older `TokenVault:` prefix):
+- `ImageVault:Name`, `ImageVault:ImageType`, `ImageVault:Species`, `ImageVault:Class`, `ImageVault:Source`, `ImageVault:Campaign`, `ImageVault:Notes`, `ImageVault:DateAdded` (plus the other type-specific fields listed above)
 
 ### Sync Strategy
 
 When the app starts or when you click "Rescan":
-1. All PNG files in the token folder are scanned
-2. Metadata is read from each PNG file
-3. Database is updated to match PNG metadata
-4. Files not in the folder are removed from the database
-5. Missing thumbnails are generated
+1. Watched folders are scanned for supported files.
+2. For images, metadata is read from each file and used to update the database.
+3. Files that moved or were deleted are detected and flagged or removed.
+4. Missing thumbnails are generated.
 
 ## Tips
 
-- **Backup**: Your metadata is in the PNG files, so backing up the `tokens` folder is all you need
-- **Sharing**: Send PNG files to others - the metadata travels with the image
-- **Organization**: Use campaigns to separate different game sessions
-- **Bulk Tagging**: Upload a bunch of tokens, select them all, then bulk-tag with common attributes
+- **Backup**: For images, your metadata travels with the PNG/JPEG file, so backing up your image folders covers that data. Audio/PDF tags and all Display Names/Notes only exist in `tokens.db` — back that up too if you want a complete backup.
+- **Sharing**: Send a PNG/JPEG to someone else and its tags go with it automatically.
+- **Organization**: Use Campaign to separate different game sessions; Source to track where an asset came from (a marketplace, a sourcebook, your own art).
+- **Bulk Tagging**: Import a folder, select everything, then bulk-tag with whatever's common across the batch.
 
 ## Troubleshooting
 
-**Tokens not showing up?**
-- Click the "Rescan" button to manually trigger a folder scan
-- Check that files are PNG format (JPG/WEBP not supported)
-- Verify the token_folder path in config.json
+**Items not showing up?**
+- Click "Rescan" to manually trigger a folder scan.
+- Confirm the file extension is supported: images are `.png`/`.jpg`/`.jpeg`, audio is `.mp3`/`.wav`/`.ogg`/`.m4a`/`.flac`, PDFs are `.pdf`.
+- If a file's underlying path changed, check for a "file not found" warning on its card and use the repair flow to point it at the new location.
 
 **Thumbnails not loading?**
-- Thumbnails are generated on-demand
-- Check file permissions on the `thumbnails` folder
+- Thumbnails are generated on-demand and cached; check file permissions on the `thumbnails` folder.
 
 **Folder watcher not working?**
-- Set `watch_folder: false` in config.json and use manual rescan instead
+- Set `"watch_folder": false` in `config.json` and use manual rescan instead.
 
 ## License
 
@@ -251,4 +232,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-Built for tabletop RPG enthusiasts who want to organize their ever-growing collection of character tokens.
+Built for tabletop RPG enthusiasts who want to organize their ever-growing collection of tokens, maps, music, and rulebooks.

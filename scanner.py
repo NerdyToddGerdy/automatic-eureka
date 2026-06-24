@@ -63,6 +63,13 @@ def get_audio_metadata(filepath: str) -> Optional[dict]:
         from tinytag import TinyTag
         tag = TinyTag.get(filepath)
 
+        # tinytag doesn't raise for content it can't actually parse (e.g. a
+        # file with an audio extension but garbage bytes) -- it just returns
+        # a tag with every field None. A real audio file always has a
+        # duration, so treat a None duration as a parse failure.
+        if tag.duration is None:
+            return None
+
         return {
             'duration_seconds': tag.duration,
             'format': os.path.splitext(filepath)[1][1:].upper(),
@@ -157,11 +164,14 @@ class TokenScanner:
                 existing = self.database.get_token_by_filepath(filepath)
 
                 if existing is None:
+                    wrote_metadata = False
+
                     # Add DateAdded if missing
                     if not file_info.get('DateAdded'):
                         file_info['DateAdded'] = datetime.now().isoformat()
                         safe_file_op(TokenMetadata.update_metadata, filepath,
                                      {'DateAdded': file_info['DateAdded']}, timeout=self.file_io_timeout)
+                        wrote_metadata = True
 
                     # CRITICAL: If ImageType is None, default to 'Token' ONLY for new files
                     if file_info.get('ImageType') is None:
@@ -169,6 +179,14 @@ class TokenScanner:
                         # Write this default back to PNG to maintain DB-PNG sync
                         safe_file_op(TokenMetadata.update_metadata, filepath,
                                      {'ImageType': 'Token'}, timeout=self.file_io_timeout)
+                        wrote_metadata = True
+
+                    # Our own metadata write-back above bumps the file's mtime on
+                    # disk; re-stat so the mtime we store matches reality, or the
+                    # next scan sees a mismatch and wrongly treats this as modified.
+                    if wrote_metadata:
+                        new_mtime = safe_file_op(os.path.getmtime, filepath, timeout=self.file_io_timeout)
+                        file_info['file_modified'] = datetime.fromtimestamp(new_mtime).isoformat()
 
                     # New token - add to database
                     if self.database.add_token(file_info):
@@ -179,9 +197,11 @@ class TokenScanner:
                     # Check if file was modified since last scan
                     if existing['file_modified'] != file_info['file_modified']:
                         # CRITICAL: Preserve ImageType from database unless PNG has explicit value
-                        # Database is source of truth; PNG may have incomplete metadata
-                        if file_info.get('ImageType') is None and existing.get('ImageType'):
-                            file_info['ImageType'] = existing['ImageType']
+                        # Database is source of truth; PNG may have incomplete metadata.
+                        # existing comes from a DB row (snake_case columns), file_info from
+                        # PNG metadata (PascalCase keys) -- don't mix the two up here.
+                        if file_info.get('ImageType') is None and existing.get('image_type'):
+                            file_info['ImageType'] = existing['image_type']
 
                         # File was modified - update from PNG metadata
                         if self.database.update_token_by_filepath(filepath, file_info):
