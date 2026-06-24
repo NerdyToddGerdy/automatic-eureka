@@ -97,6 +97,12 @@ h1, h2, h3, h4, h5, h6 {
     box-shadow: 0 0 15px rgba(201, 162, 39, 0.4);
 }
 
+.btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
 .btn-primary {
     background-color: var(--gold);
     color: var(--bg-dark);

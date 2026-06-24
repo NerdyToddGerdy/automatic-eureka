@@ -1310,26 +1310,29 @@ async function handleTokenUpdate(e) {
         updates[field] = dropdown.getValue();
     }
 
-    try {
-        const response = await fetch(`/api/tokens/${tokenId}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(updates)
-        });
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+    await withLoading(submitBtn, async () => {
+        try {
+            const response = await fetch(`/api/tokens/${tokenId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(updates)
+            });
 
-        const data = await response.json();
+            const data = await response.json();
 
-        if (data.success) {
-            closeModals();
-            loadTokens();
-            loadFilterOptions();
-            showSuccess('Token updated successfully');
-        } else {
-            showError('Failed to update token');
+            if (data.success) {
+                closeModals();
+                loadTokens();
+                loadFilterOptions();
+                showSuccess('Token updated successfully');
+            } else {
+                showError('Failed to update token');
+            }
+        } catch (error) {
+            showError('Error updating token: ' + error.message);
         }
-    } catch (error) {
-        showError('Error updating token: ' + error.message);
-    }
+    }, 'Saving…');
 }
 
 // Handle token delete
@@ -1472,30 +1475,33 @@ async function handleBulkUpdate(e) {
         return;
     }
 
-    try {
-        const response = await fetch('/api/tokens/bulk-update', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                token_ids: Array.from(selectedTokenIds),
-                updates: updates
-            })
-        });
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+    await withLoading(submitBtn, async () => {
+        try {
+            const response = await fetch('/api/tokens/bulk-update', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    token_ids: Array.from(selectedTokenIds),
+                    updates: updates
+                })
+            });
 
-        const data = await response.json();
+            const data = await response.json();
 
-        if (data.success) {
-            closeModals();
-            deselectAll();
-            loadTokens();
-            loadFilterOptions();
-            showSuccess(`Updated ${data.results.updated} tokens`);
-        } else {
-            showError('Failed to update tokens');
+            if (data.success) {
+                closeModals();
+                deselectAll();
+                loadTokens();
+                loadFilterOptions();
+                showSuccess(`Updated ${data.results.updated} tokens`);
+            } else {
+                showError('Failed to update tokens');
+            }
+        } catch (error) {
+            showError('Error updating tokens: ' + error.message);
         }
-    } catch (error) {
-        showError('Error updating tokens: ' + error.message);
-    }
+    }, 'Applying…');
 }
 
 // Bulk delete tokens
@@ -1509,27 +1515,29 @@ async function bulkDeleteTokens() {
         return;
     }
 
-    try {
-        const response = await fetch('/api/tokens/bulk-delete', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                token_ids: Array.from(selectedTokenIds)
-            })
-        });
+    await withLoading(document.getElementById('bulkDeleteBtn'), async () => {
+        try {
+            const response = await fetch('/api/tokens/bulk-delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    token_ids: Array.from(selectedTokenIds)
+                })
+            });
 
-        const data = await response.json();
+            const data = await response.json();
 
-        if (data.success) {
-            deselectAll();
-            loadTokens();
-            showSuccess(`Deleted ${data.results.deleted} tokens`);
-        } else {
-            showError('Failed to delete tokens');
+            if (data.success) {
+                deselectAll();
+                loadTokens();
+                showSuccess(`Deleted ${data.results.deleted} tokens`);
+            } else {
+                showError('Failed to delete tokens');
+            }
+        } catch (error) {
+            showError('Error deleting tokens: ' + error.message);
         }
-    } catch (error) {
-        showError('Error deleting tokens: ' + error.message);
-    }
+    }, 'Deleting…');
 }
 
 // Show image type selection modal
@@ -1777,23 +1785,25 @@ async function handleFileUpload(e) {
 async function rescanFolder() {
     showLoading();
 
-    try {
-        const response = await fetch('/api/scan', { method: 'POST' });
-        const data = await response.json();
+    await withLoading(document.getElementById('scanBtn'), async () => {
+        try {
+            const response = await fetch('/api/scan', { method: 'POST' });
+            const data = await response.json();
 
-        if (data.success) {
-            const results = data.results;
-            showSuccess(`Scan complete: ${results.added} added, ${results.updated} updated, ${results.removed} removed`);
-            loadTokens();
-            loadFilterOptions();
-        } else {
-            showError('Failed to scan folder');
+            if (data.success) {
+                const results = data.results;
+                showSuccess(`Scan complete: ${results.added} added, ${results.updated} updated, ${results.removed} removed`);
+                loadTokens();
+                loadFilterOptions();
+            } else {
+                showError('Failed to scan folder');
+            }
+        } catch (error) {
+            showError('Error scanning folder: ' + error.message);
+        } finally {
+            hideLoading();
         }
-    } catch (error) {
-        showError('Error scanning folder: ' + error.message);
-    } finally {
-        hideLoading();
-    }
+    }, 'Scanning…');
 }
 
 // Show stats
@@ -2129,6 +2139,25 @@ function showLoading() {
 // Hide loading indicator
 function hideLoading() {
     loadingIndicator.style.display = 'none';
+}
+
+// Disable `button` and swap its label to `loadingText` for the duration of
+// asyncFn(), so a slow request can't be fired twice by an impatient click.
+// Restores the original label/disabled state even if asyncFn() throws.
+async function withLoading(button, asyncFn, loadingText = 'Working…') {
+    if (!button) return asyncFn();
+
+    const originalText = button.textContent;
+    const originalDisabled = button.disabled;
+    button.disabled = true;
+    button.textContent = loadingText;
+
+    try {
+        return await asyncFn();
+    } finally {
+        button.disabled = originalDisabled;
+        button.textContent = originalText;
+    }
 }
 
 // Show success message
@@ -2834,23 +2863,25 @@ function setupRepairModalListeners() {
             return;
         }
 
-        try {
-            const response = await fetch(`/api/tokens/${currentRepairToken.id}`, {
-                method: 'DELETE'
-            });
+        await withLoading(document.getElementById('removeEntryBtn'), async () => {
+            try {
+                const response = await fetch(`/api/tokens/${currentRepairToken.id}`, {
+                    method: 'DELETE'
+                });
 
-            const data = await response.json();
+                const data = await response.json();
 
-            if (data.success) {
-                showSuccess('Token removed from vault');
-                document.getElementById('repairModal').style.display = 'none';
-                loadTokens();
-            } else {
-                showError('Failed to remove token');
+                if (data.success) {
+                    showSuccess('Token removed from vault');
+                    document.getElementById('repairModal').style.display = 'none';
+                    loadTokens();
+                } else {
+                    showError('Failed to remove token');
+                }
+            } catch (error) {
+                showError('Error removing token: ' + error.message);
             }
-        } catch (error) {
-            showError('Error removing token: ' + error.message);
-        }
+        }, 'Removing…');
     };
     removeBtn.replaceWith(removeBtn.cloneNode(true));
     document.getElementById('removeEntryBtn').addEventListener('click', newRemoveHandler);
@@ -2878,32 +2909,35 @@ function setupRepairModalListeners() {
 
         showLoading();
 
-        try {
-            // Update the file path in database
-            const response = await fetch(`/api/tokens/${currentRepairToken.id}/update-path`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    filepath: newPath
-                })
-            });
+        const submitBtn = e.target.querySelector('button[type="submit"]');
+        await withLoading(submitBtn, async () => {
+            try {
+                // Update the file path in database
+                const response = await fetch(`/api/tokens/${currentRepairToken.id}/update-path`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        filepath: newPath
+                    })
+                });
 
-            const data = await response.json();
+                const data = await response.json();
 
-            if (data.success) {
-                showSuccess('File path updated successfully');
-                document.getElementById('repairModal').style.display = 'none';
-                loadTokens();
-            } else {
-                showError(data.error || 'Failed to update file path');
+                if (data.success) {
+                    showSuccess('File path updated successfully');
+                    document.getElementById('repairModal').style.display = 'none';
+                    loadTokens();
+                } else {
+                    showError(data.error || 'Failed to update file path');
+                }
+            } catch (error) {
+                showError('Error updating file path: ' + error.message);
+            } finally {
+                hideLoading();
             }
-        } catch (error) {
-            showError('Error updating file path: ' + error.message);
-        } finally {
-            hideLoading();
-        }
+        }, 'Updating…');
     };
     repairForm.replaceWith(repairForm.cloneNode(true));
     document.getElementById('repairForm').addEventListener('submit', newFormHandler);
@@ -4312,25 +4346,28 @@ async function handleAudioUpdate(e) {
         updateData[field] = dropdown.getValue();
     }
 
-    try {
-        const response = await fetch(`/api/audio/${audioId}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(updateData)
-        });
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+    await withLoading(submitBtn, async () => {
+        try {
+            const response = await fetch(`/api/audio/${audioId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(updateData)
+            });
 
-        const data = await response.json();
+            const data = await response.json();
 
-        if (data.success) {
-            closeModals();
-            loadAudioFiles();
-            showNotification('Audio file updated successfully');
-        } else {
-            showError(data.error || 'Failed to update audio file');
+            if (data.success) {
+                closeModals();
+                loadAudioFiles();
+                showNotification('Audio file updated successfully');
+            } else {
+                showError(data.error || 'Failed to update audio file');
+            }
+        } catch (error) {
+            showError('Error updating audio file: ' + error.message);
         }
-    } catch (error) {
-        showError('Error updating audio file: ' + error.message);
-    }
+    }, 'Saving…');
 }
 
 // Handle audio delete
@@ -5002,26 +5039,29 @@ async function handlePdfUpdate(e) {
         Notes: document.getElementById('editPdfNotes').value
     };
 
-    try {
-        const response = await fetch(`/api/pdfs/${pdfId}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(updateData)
-        });
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+    await withLoading(submitBtn, async () => {
+        try {
+            const response = await fetch(`/api/pdfs/${pdfId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(updateData)
+            });
 
-        const data = await response.json();
+            const data = await response.json();
 
-        if (data.success) {
-            closeModals();
-            loadPdfFiles();
-            loadPdfFilterOptions();
-            showNotification('PDF updated successfully');
-        } else {
-            showError(data.error || 'Failed to update PDF');
+            if (data.success) {
+                closeModals();
+                loadPdfFiles();
+                loadPdfFilterOptions();
+                showNotification('PDF updated successfully');
+            } else {
+                showError(data.error || 'Failed to update PDF');
+            }
+        } catch (error) {
+            showError('Error updating PDF: ' + error.message);
         }
-    } catch (error) {
-        showError('Error updating PDF: ' + error.message);
-    }
+    }, 'Saving…');
 }
 
 // Handle PDF delete
