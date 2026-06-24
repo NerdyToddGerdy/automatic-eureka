@@ -13,9 +13,6 @@ import io
 from database import TokenDatabase
 from metadata import TokenMetadata
 from scanner import TokenScanner
-from drive_client import DriveClient
-from drive_sync import DriveSyncService
-from google.oauth2.credentials import Credentials
 from file_utils import calculate_file_hash_from_bytes
 from cache import get_image_cache
 
@@ -67,8 +64,6 @@ PDF_EXTENSIONS = {'.pdf'}
 # Global objects
 db = None
 scanner = None
-drive_client = None
-drive_sync = None
 image_cache = None
 
 
@@ -174,41 +169,12 @@ def save_config():
 
 def initialize_app():
     """Initialize the application components."""
-    global db, scanner, drive_client, drive_sync, image_cache
+    global db, scanner, image_cache
 
     load_config()
 
     # Initialize database
     db = TokenDatabase(os.environ.get('DB_PATH', 'tokens.db'))
-
-    # Initialize Google Drive client if OAuth tokens available
-    oauth_tokens_json = os.environ.get('GOOGLE_OAUTH_TOKENS')
-    if oauth_tokens_json:
-        try:
-            token_data = json.loads(oauth_tokens_json)
-            credentials = Credentials(
-                token=token_data.get('token'),
-                refresh_token=token_data.get('refresh_token'),
-                token_uri=token_data.get('token_uri'),
-                client_id=token_data.get('client_id'),
-                client_secret=token_data.get('client_secret'),
-                scopes=token_data.get('scopes')
-            )
-            drive_client = DriveClient(credentials)
-            print("✓ Google Drive client initialized successfully")
-
-            # Initialize Drive sync service
-            drive_sync = DriveSyncService(db, drive_client)
-            print("✓ Google Drive sync service initialized")
-        except Exception as e:
-            print(f"⚠ Warning: Could not initialize Drive client: {e}")
-            print("  App will run in local-only mode")
-            drive_client = None
-            drive_sync = None
-    else:
-        print("ℹ No Google OAuth tokens found - running in local-only mode")
-        drive_client = None
-        drive_sync = None
 
     # Initialize image cache (100MB default)
     image_cache = get_image_cache(max_size_mb=100)
@@ -397,40 +363,18 @@ def update_token(token_id):
             if not db.update_token(token_id, update_data):
                 return jsonify({'success': False, 'error': 'Failed to update database'}), 500
 
-            # Check if this is a Drive-stored file
-            drive_file_id = token.get('drive_file_id')
+            # Mirror to PNG (best effort)
+            try:
+                current_metadata = TokenMetadata.read_token_metadata(token['filepath'])
+                current_metadata.update(update_data)
 
-            if drive_file_id and drive_client:
-                # Sync to Drive custom properties (best effort)
-                try:
-                    # Prepare metadata for Drive (custom properties)
-                    drive_metadata = {}
-                    for key, value in update_data.items():
-                        # Convert to string for Drive custom properties
-                        if value is not None:
-                            drive_metadata[key] = str(value)
-
-                    # Update Drive file metadata
-                    drive_client.update_file_metadata(drive_file_id, drive_metadata)
-                    print(f"✓ Synced metadata to Drive for {token.get('filename', 'unknown')}")
-
-                except Exception as drive_error:
-                    print(f"⚠ Warning: Failed to sync metadata to Drive: {drive_error}")
+                if not TokenMetadata.write_token_metadata(token['filepath'], current_metadata):
+                    print(f"⚠ Warning: Failed to write metadata to PNG for {token['filepath']}")
                     # Don't fail the request - database is source of truth
 
-            else:
-                # Local file - mirror to PNG (best effort)
-                try:
-                    current_metadata = TokenMetadata.read_token_metadata(token['filepath'])
-                    current_metadata.update(update_data)
-
-                    if not TokenMetadata.write_token_metadata(token['filepath'], current_metadata):
-                        print(f"⚠ Warning: Failed to write metadata to PNG for {token['filepath']}")
-                        # Don't fail the request - database is source of truth
-
-                except Exception as png_error:
-                    print(f"⚠ Warning: Failed to update PNG metadata: {png_error}")
-                    # Don't fail the request - database is source of truth
+            except Exception as png_error:
+                print(f"⚠ Warning: Failed to update PNG metadata: {png_error}")
+                # Don't fail the request - database is source of truth
 
             updated_token = db.get_token(token_id)
             return jsonify({'success': True, 'token': serialize_token(updated_token, db)})
@@ -1238,22 +1182,8 @@ def rename_tag_value(field):
 
 @app.route('/api/scan', methods=['POST'])
 def rescan():
-    """Manually trigger a folder scan (local or Drive)."""
+    """Manually trigger a folder scan."""
     try:
-        # Check if Drive sync is available and has monitored folders
-        if drive_sync:
-            monitored_folders = db.get_all_monitored_folders()
-            if monitored_folders:
-                # Use Drive sync
-                print("Starting Drive sync...")
-                results = drive_sync.perform_full_sync()
-                return jsonify({
-                    'success': True,
-                    'results': results,
-                    'mode': 'drive'
-                })
-
-        # Fall back to local scanner
         print("Starting local folder scan...")
         results = scanner.scan_and_sync()
         scanner.scan_pdfs_and_sync()
@@ -1314,88 +1244,28 @@ def get_thumbnail(token_id):
         if not token:
             return jsonify({'success': False, 'error': 'Token not found'}), 404
 
-        # Check if this is a Drive-stored image
-        drive_file_id = token.get('drive_file_id')
+        filepath = token['filepath']
 
-        if drive_file_id and drive_client:
-            # Try to get thumbnail from cache
-            thumbnail_cache_key = f"{drive_file_id}_thumbnail"
-            cached_thumbnail = image_cache.get(thumbnail_cache_key)
+        if not os.path.exists(filepath):
+            return jsonify({'success': False, 'error': 'Image file not found'}), 404
 
-            if cached_thumbnail:
-                thumbnail_bytes, _ = cached_thumbnail
-                return send_file(
-                    io.BytesIO(thumbnail_bytes),
-                    mimetype='image/png',
-                    as_attachment=False,
-                    download_name=f'thumbnail_{token_id}.png'
-                )
+        # Generate thumbnail in-memory
+        thumbnail_bytes = generate_thumbnail_in_memory(
+            filepath,
+            tuple(config.get('thumbnail_size', [150, 150]))
+        )
 
-            # Get full image (from cache or download from Drive)
-            cached_image = image_cache.get(drive_file_id)
-            if cached_image:
-                image_bytes, _ = cached_image
-            else:
-                try:
-                    image_bytes = drive_client.download_file(drive_file_id)
-                    # Cache full image for future use
-                    image_cache.set(drive_file_id, image_bytes, 'image/png')
-                except Exception as drive_error:
-                    return jsonify({
-                        'success': False,
-                        'error': f'Failed to download from Drive: {str(drive_error)}'
-                    }), 500
+        if thumbnail_bytes is None:
+            # Fallback: return original image
+            return send_file(filepath, mimetype='image/png')
 
-            # Generate thumbnail from image bytes
-            try:
-                img = Image.open(io.BytesIO(image_bytes))
-                img.thumbnail(tuple(config.get('thumbnail_size', [150, 150])), Image.Resampling.LANCZOS)
-
-                buffer = io.BytesIO()
-                img.save(buffer, format='PNG', optimize=True)
-                buffer.seek(0)
-                thumbnail_bytes = buffer.getvalue()
-
-                # Cache the thumbnail
-                image_cache.set(thumbnail_cache_key, thumbnail_bytes, 'image/png')
-
-                return send_file(
-                    io.BytesIO(thumbnail_bytes),
-                    mimetype='image/png',
-                    as_attachment=False,
-                    download_name=f'thumbnail_{token_id}.png'
-                )
-
-            except Exception as thumb_error:
-                return jsonify({
-                    'success': False,
-                    'error': f'Failed to generate thumbnail: {str(thumb_error)}'
-                }), 500
-
-        else:
-            # Local file serving (existing logic)
-            filepath = token['filepath']
-
-            if not os.path.exists(filepath):
-                return jsonify({'success': False, 'error': 'Image file not found'}), 404
-
-            # Generate thumbnail in-memory
-            thumbnail_bytes = generate_thumbnail_in_memory(
-                filepath,
-                tuple(config.get('thumbnail_size', [150, 150]))
-            )
-
-            if thumbnail_bytes is None:
-                # Fallback: return original image
-                return send_file(filepath, mimetype='image/png')
-
-            # Return thumbnail from memory
-            return send_file(
-                io.BytesIO(thumbnail_bytes),
-                mimetype='image/png',
-                as_attachment=False,
-                download_name=f'thumbnail_{token_id}.png'
-            )
+        # Return thumbnail from memory
+        return send_file(
+            io.BytesIO(thumbnail_bytes),
+            mimetype='image/png',
+            as_attachment=False,
+            download_name=f'thumbnail_{token_id}.png'
+        )
 
     except Exception as e:
         print(f"Error generating thumbnail: {e}")
@@ -1410,62 +1280,17 @@ def get_image(token_id):
         if not token:
             return jsonify({'success': False, 'error': 'Token not found'}), 404
 
-        # Check if this is a Drive-stored image
-        drive_file_id = token.get('drive_file_id')
+        filepath = token['filepath']
 
-        if drive_file_id and drive_client:
-            # Try to get from cache first
-            cached = image_cache.get(drive_file_id)
-            if cached:
-                image_bytes, mimetype = cached
-                return send_file(
-                    io.BytesIO(image_bytes),
-                    mimetype=mimetype,
-                    download_name=token.get('filename', 'image.png')
-                )
-
-            # Not in cache - download from Drive
-            try:
-                image_bytes = drive_client.download_file(drive_file_id)
-
-                # Detect MIME type
-                filename = token.get('filename', '')
-                if filename.lower().endswith('.png'):
-                    mimetype = 'image/png'
-                elif filename.lower().endswith(('.jpg', '.jpeg')):
-                    mimetype = 'image/jpeg'
-                else:
-                    mimetype = 'image/png'
-
-                # Cache the image
-                image_cache.set(drive_file_id, image_bytes, mimetype)
-
-                # Return the image
-                return send_file(
-                    io.BytesIO(image_bytes),
-                    mimetype=mimetype,
-                    download_name=filename
-                )
-
-            except Exception as drive_error:
-                return jsonify({
-                    'success': False,
-                    'error': f'Failed to download from Drive: {str(drive_error)}'
-                }), 500
-
+        # Detect MIME type based on file extension
+        if filepath.lower().endswith('.png'):
+            mimetype = 'image/png'
+        elif filepath.lower().endswith(('.jpg', '.jpeg')):
+            mimetype = 'image/jpeg'
         else:
-            # Local file serving (existing logic)
-            filepath = token['filepath']
+            mimetype = 'image/png'  # default fallback
 
-            # Detect MIME type based on file extension
-            if filepath.lower().endswith('.png'):
-                mimetype = 'image/png'
-            elif filepath.lower().endswith(('.jpg', '.jpeg')):
-                mimetype = 'image/jpeg'
-            else:
-                mimetype = 'image/png'  # default fallback
-
-            return send_file(filepath, mimetype=mimetype)
+        return send_file(filepath, mimetype=mimetype)
 
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -2079,130 +1904,6 @@ def get_pdf_stats():
 
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
-
-
-# ===== GOOGLE DRIVE ENDPOINTS =====
-
-@app.route('/api/drive/folders', methods=['GET'])
-def get_drive_folders():
-    """
-    Browse folders in Google Drive.
-    Query params:
-        parent_id (optional): Parent folder ID to list subfolders
-    """
-    if not drive_client:
-        return jsonify({'success': False, 'error': 'Google Drive not connected'}), 503
-
-    try:
-        parent_id = request.args.get('parent_id')
-        folders = drive_client.list_folders(parent_folder_id=parent_id)
-
-        return jsonify({
-            'success': True,
-            'folders': folders
-        })
-
-    except Exception as e:
-        print(f"Error listing Drive folders: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/drive/folders/monitored', methods=['GET'])
-def get_monitored_folders():
-    """Get all folders currently being monitored."""
-    try:
-        folders = db.get_all_monitored_folders()
-        return jsonify({
-            'success': True,
-            'folders': folders
-        })
-
-    except Exception as e:
-        print(f"Error getting monitored folders: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/drive/folders/monitor', methods=['POST'])
-def add_monitored_folder():
-    """
-    Add a folder to the monitored folders list.
-    Body: {folder_id, folder_name, folder_path (optional)}
-    """
-    if not drive_client:
-        return jsonify({'success': False, 'error': 'Google Drive not connected'}), 503
-
-    try:
-        data = request.get_json()
-        folder_id = data.get('folder_id')
-        folder_name = data.get('folder_name')
-        folder_path = data.get('folder_path')
-
-        if not folder_id or not folder_name:
-            return jsonify({'success': False, 'error': 'Missing required fields'}), 400
-
-        # Check if already monitored
-        if db.is_folder_monitored(folder_id):
-            return jsonify({'success': False, 'error': 'Folder is already being monitored'}), 400
-
-        # Add to database
-        result_id = db.add_monitored_folder(folder_id, folder_name, folder_path)
-
-        if result_id:
-            return jsonify({
-                'success': True,
-                'message': f'Folder "{folder_name}" added to monitored folders',
-                'folder_id': result_id
-            })
-        else:
-            return jsonify({'success': False, 'error': 'Failed to add folder'}), 500
-
-    except Exception as e:
-        print(f"Error adding monitored folder: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/drive/folders/monitor/<folder_id>', methods=['DELETE'])
-def remove_monitored_folder(folder_id):
-    """Remove a folder from the monitored folders list."""
-    try:
-        success = db.remove_monitored_folder(folder_id)
-
-        if success:
-            return jsonify({
-                'success': True,
-                'message': 'Folder removed from monitoring'
-            })
-        else:
-            return jsonify({'success': False, 'error': 'Folder not found'}), 404
-
-    except Exception as e:
-        print(f"Error removing monitored folder: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/drive/status', methods=['GET'])
-def get_drive_status():
-    """Get Google Drive connection status."""
-    if not drive_client:
-        return jsonify({
-            'connected': False,
-            'message': 'Google Drive not connected'
-        })
-
-    try:
-        # Test connection by getting Drive info
-        about = drive_client.get_about()
-        return jsonify({
-            'connected': True,
-            'user': about.get('user', {}),
-            'storage': about.get('storageQuota', {})
-        })
-
-    except Exception as e:
-        return jsonify({
-            'connected': False,
-            'error': str(e)
-        }), 500
 
 
 def cleanup():

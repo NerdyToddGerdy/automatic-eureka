@@ -3738,10 +3738,6 @@ function setupFolderDragDrop() {
     });
 }
 
-// ============================================================================
-// Google Drive Integration
-// ============================================================================
-
 // Helper function to escape HTML
 function escapeHtml(text) {
     const div = document.createElement('div');

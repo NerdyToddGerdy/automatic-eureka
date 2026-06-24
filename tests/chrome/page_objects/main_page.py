@@ -9,7 +9,6 @@ class MainPage(BasePage):
 
     # Header buttons
     UPLOAD_BTN = (By.ID, "uploadBtn")
-    DRIVE_BTN = (By.ID, "driveBtn")
     SCAN_BTN = (By.ID, "scanBtn")
     STATS_BTN = (By.ID, "statsBtn")
 
