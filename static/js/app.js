@@ -565,6 +565,16 @@ class TagMultiSelect {
 }
 
 // FilterMultiSelect class for multi-value filter inputs
+// Filter value meaning "this field is empty/NULL" - must match
+// EMPTY_FIELD_SENTINEL in database.py.
+const EMPTY_TAG_VALUE = '__EMPTY__';
+
+// Display label for a filter option/pill value, swapping the empty-field
+// sentinel for a human-readable placeholder.
+function filterOptionLabel(value) {
+    return value === EMPTY_TAG_VALUE ? '(Untagged)' : value;
+}
+
 class FilterMultiSelect {
     constructor(container, filterName, options = []) {
         this.container = container;
@@ -615,8 +625,8 @@ class FilterMultiSelect {
         } else {
             this.pillsEl.innerHTML = this.values.map(value => `
                 <span class="filter-pill">
-                    <span>${this.escapeHtml(value)}</span>
-                    <button type="button" class="filter-pill-remove" data-value="${this.escapeHtml(value)}" aria-label="Remove ${this.escapeHtml(value)}">&times;</button>
+                    <span>${this.escapeHtml(filterOptionLabel(value))}</span>
+                    <button type="button" class="filter-pill-remove" data-value="${this.escapeHtml(value)}" aria-label="Remove ${this.escapeHtml(filterOptionLabel(value))}">&times;</button>
                 </span>
             `).join('');
             this.inputEl.placeholder = '';
@@ -640,7 +650,7 @@ class FilterMultiSelect {
 
         this.optionsEl.innerHTML = availableOptions.map((option, i) => `
             <div class="filter-multiselect-option" role="option" id="${this.instanceId}-option-${i}" data-value="${this.escapeHtml(option)}">
-                ${this.escapeHtml(option)}
+                ${this.escapeHtml(filterOptionLabel(option))}
             </div>
         `).join('');
     }
@@ -698,7 +708,7 @@ class FilterMultiSelect {
             const query = e.target.value.toLowerCase();
             const filteredOptions = this.options
                 .filter(opt => !this.values.includes(opt))
-                .filter(opt => opt.toLowerCase().includes(query));
+                .filter(opt => filterOptionLabel(opt).toLowerCase().includes(query));
 
             this.renderOptionsList(filteredOptions);
         });
@@ -952,16 +962,19 @@ async function loadFilterOptions() {
                 const data = await response.json();
 
                 if (data.success) {
+                    // Offer "(Untagged)" alongside real values so missing tags can be found
+                    const optionsWithEmpty = [EMPTY_TAG_VALUE, ...(data.values || [])];
+
                     // Create or update filter
                     if (!filterMultiSelects[filter.name]) {
                         filterMultiSelects[filter.name] = new FilterMultiSelect(
                             container,
                             filter.label,
-                            data.values || []
+                            optionsWithEmpty
                         );
                     } else {
                         // Update existing filter options
-                        filterMultiSelects[filter.name].setOptions(data.values || []);
+                        filterMultiSelects[filter.name].setOptions(optionsWithEmpty);
                     }
 
                     // Populate datalist for bulk edit autocomplete
@@ -5349,10 +5362,10 @@ function populatePdfFilterSelect(select, values, currentValue) {
     const firstOption = select.options[0];
     select.innerHTML = '';
     select.appendChild(firstOption);
-    values.forEach(value => {
+    [EMPTY_TAG_VALUE, ...values].forEach(value => {
         const option = document.createElement('option');
         option.value = value;
-        option.textContent = value;
+        option.textContent = filterOptionLabel(value);
         select.appendChild(option);
     });
     select.value = currentValue || '';
