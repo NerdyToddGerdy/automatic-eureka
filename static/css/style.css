@@ -2714,6 +2714,26 @@ textarea.form-input {
         animation: none;
         opacity: 0;
     }
+
+    /* Collapse every other animation/transition (spinner, pulse, hover glows,
+       wizard progress bar, etc.) to effectively instant rather than hunting
+       down and patching each one individually. */
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+
+    /* Collapsing transition-duration still lets these jump to their hover
+       offset instantly; remove the offset itself so hover only changes
+       color/shadow, not position. */
+    .token-card:hover,
+    .token-warning:hover,
+    .wizard-preview-thumb:hover,
+    .scroll-to-top:hover {
+        transform: none;
+    }
 }
 
 @media (max-width: 768px) {
