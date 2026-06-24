@@ -13,7 +13,7 @@ import io
 from database import TokenDatabase
 from metadata import TokenMetadata
 from scanner import TokenScanner
-from file_utils import calculate_file_hash_from_bytes
+from file_utils import calculate_file_hash_from_bytes, safe_file_op, FileOpTimeout
 from cache import get_image_cache
 
 
@@ -28,8 +28,11 @@ DEFAULT_CONFIG = {
     'thumbnail_size': [150, 150],
     'watch_folder': True,
     'port': 5000,
-    'host': '127.0.0.1'
+    'host': '127.0.0.1',
+    'file_io_timeout_seconds': 5
 }
+
+PLACEHOLDER_THUMBNAIL_PATH = os.path.join('static', 'img', 'missing.png')
 
 config = DEFAULT_CONFIG.copy()
 
@@ -181,52 +184,99 @@ def initialize_app():
     print("✓ Image cache initialized (100MB)")
 
     # Initialize scanner (Reference Mode - no local token folder needed)
-    scanner = TokenScanner(database=db)
+    scanner = TokenScanner(database=db, file_io_timeout=get_file_io_timeout())
     print("✓ Scanner initialized (Reference Mode - files stay in original locations)")
 
 
-def generate_thumbnail_in_memory(filepath: str, size: tuple = (150, 150)) -> Optional[bytes]:
-    """Generate a thumbnail in-memory and return as bytes."""
+def get_file_io_timeout() -> int:
+    """Configured per-file-operation timeout in seconds (default 5)."""
+    return config.get('file_io_timeout_seconds', 5)
+
+
+def get_placeholder_thumbnail_bytes() -> Optional[bytes]:
+    """Read the static placeholder thumbnail shown for missing/unreachable files."""
     try:
-        from io import BytesIO
+        with open(PLACEHOLDER_THUMBNAIL_PATH, 'rb') as f:
+            return f.read()
+    except Exception as e:
+        print(f"Error reading placeholder thumbnail: {e}")
+        return None
 
-        with Image.open(filepath) as img:
-            img.thumbnail(size, Image.Resampling.LANCZOS)
 
-            buffer = BytesIO()
-            img.save(buffer, format='PNG', optimize=True)
-            buffer.seek(0)
+def _read_image_thumbnail(filepath: str, size: tuple) -> bytes:
+    from io import BytesIO
 
-            return buffer.getvalue()
+    with Image.open(filepath) as img:
+        img.thumbnail(size, Image.Resampling.LANCZOS)
 
+        buffer = BytesIO()
+        img.save(buffer, format='PNG', optimize=True)
+        buffer.seek(0)
+
+        return buffer.getvalue()
+
+
+def generate_thumbnail_in_memory(filepath: str, size: tuple = (150, 150)) -> Optional[bytes]:
+    """
+    Generate a thumbnail in-memory and return as bytes.
+
+    Raises FileOpTimeout if the file is unreachable within the configured
+    timeout, so callers can distinguish "network hiccup" (show a
+    placeholder, mark missing) from "not a valid image" (None - fall back
+    to serving the original file, as before).
+    """
+    try:
+        return safe_file_op(_read_image_thumbnail, filepath, size, timeout=get_file_io_timeout())
+    except FileOpTimeout:
+        raise
     except Exception as e:
         print(f"Error generating in-memory thumbnail for {filepath}: {e}")
         return None
 
 
+def _read_pdf_thumbnail(filepath: str, size: tuple) -> bytes:
+    import fitz
+    from io import BytesIO
+
+    with fitz.open(filepath) as doc:
+        page = doc.load_page(0)
+        zoom = 96 / 72
+        pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
+
+        img = Image.open(BytesIO(pix.tobytes('png')))
+        img.thumbnail(size, Image.Resampling.LANCZOS)
+
+        buffer = BytesIO()
+        img.save(buffer, format='PNG', optimize=True)
+        buffer.seek(0)
+
+        return buffer.getvalue()
+
+
 def generate_pdf_thumbnail_in_memory(filepath: str, size: tuple = (150, 150)) -> Optional[bytes]:
-    """Render page 1 of a PDF to a thumbnail in-memory and return as PNG bytes."""
+    """
+    Render page 1 of a PDF to a thumbnail in-memory and return as PNG bytes.
+
+    Raises FileOpTimeout if the file is unreachable within the configured
+    timeout (see generate_thumbnail_in_memory for why this is distinct
+    from a None return).
+    """
     try:
-        import fitz
-        from io import BytesIO
-
-        with fitz.open(filepath) as doc:
-            page = doc.load_page(0)
-            zoom = 96 / 72
-            pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
-
-            img = Image.open(BytesIO(pix.tobytes('png')))
-            img.thumbnail(size, Image.Resampling.LANCZOS)
-
-            buffer = BytesIO()
-            img.save(buffer, format='PNG', optimize=True)
-            buffer.seek(0)
-
-            return buffer.getvalue()
-
+        return safe_file_op(_read_pdf_thumbnail, filepath, size, timeout=get_file_io_timeout())
+    except FileOpTimeout:
+        raise
     except Exception as e:
         print(f"Error generating PDF thumbnail for {filepath}: {e}")
         return None
+
+
+def _timeout_response(mimetype: str = 'image/png', use_placeholder: bool = False):
+    """Standard response for a file that timed out: a placeholder image (thumbnails) or a 503."""
+    if use_placeholder:
+        placeholder = get_placeholder_thumbnail_bytes()
+        if placeholder:
+            return send_file(io.BytesIO(placeholder), mimetype=mimetype, as_attachment=False)
+    return jsonify({'success': False, 'error': 'File temporarily unreachable (network timeout)'}), 503
 
 
 def serialize_token(token, db_instance):
@@ -394,8 +444,14 @@ def delete_token(token_id):
             return jsonify({'success': False, 'error': 'Token not found'}), 404
 
         # Delete the file
-        if os.path.exists(token['filepath']):
-            os.remove(token['filepath'])
+        def _remove_if_exists():
+            if os.path.exists(token['filepath']):
+                os.remove(token['filepath'])
+
+        try:
+            safe_file_op(_remove_if_exists, timeout=get_file_io_timeout())
+        except FileOpTimeout:
+            print(f"Timeout removing file (possible network issue): {token['filepath']}")
 
         # Delete from database
         if db.delete_token(token_id):
@@ -426,7 +482,12 @@ def update_token_path(token_id):
             return jsonify({'success': False, 'error': 'Token not found'}), 404
 
         # Verify new file exists
-        if not os.path.exists(new_filepath):
+        try:
+            new_file_exists = safe_file_op(os.path.exists, new_filepath, timeout=get_file_io_timeout())
+        except FileOpTimeout:
+            return jsonify({'success': False, 'error': 'File could not be accessed (network timeout)'}), 503
+
+        if not new_file_exists:
             return jsonify({'success': False, 'error': 'File does not exist at specified path'}), 400
 
         # Verify it's a supported image file
@@ -536,7 +597,19 @@ def check_duplicates():
             filepaths = data.get('filepaths', [])
 
             for filepath in filepaths:
-                if not os.path.exists(filepath):
+                try:
+                    file_exists = safe_file_op(os.path.exists, filepath, timeout=get_file_io_timeout())
+                except FileOpTimeout:
+                    duplicates_found.append({
+                        'filename': os.path.basename(filepath),
+                        'error': 'File could not be accessed (network timeout)',
+                        'hash': None,
+                        'content_duplicate': None,
+                        'name_collision': None
+                    })
+                    continue
+
+                if not file_exists:
                     duplicates_found.append({
                         'filename': os.path.basename(filepath),
                         'error': 'File not found',
@@ -548,7 +621,7 @@ def check_duplicates():
 
                 try:
                     # Calculate hash
-                    file_hash = calculate_file_hash(filepath)
+                    file_hash = safe_file_op(calculate_file_hash, filepath, timeout=get_file_io_timeout())
 
                     # Check for duplicates
                     dup_info = find_duplicates(db, filepath, file_hash)
@@ -619,11 +692,19 @@ def add_file_reference():
         if not filepath:
             return jsonify({'success': False, 'error': 'No filepath provided'}), 400
 
-        if not os.path.exists(filepath):
+        try:
+            file_exists = safe_file_op(os.path.exists, filepath, timeout=get_file_io_timeout())
+        except FileOpTimeout:
+            return jsonify({'success': False, 'error': 'File could not be accessed (network timeout)'}), 503
+
+        if not file_exists:
             return jsonify({'success': False, 'error': 'File not found'}), 404
 
         # Calculate hash
-        file_hash = calculate_file_hash(filepath)
+        try:
+            file_hash = safe_file_op(calculate_file_hash, filepath, timeout=get_file_io_timeout())
+        except FileOpTimeout:
+            return jsonify({'success': False, 'error': 'File could not be read (network timeout)'}), 503
 
         # Check for existing duplicate by hash
         existing = db.find_by_hash(file_hash)
@@ -642,26 +723,36 @@ def add_file_reference():
             overwrite_existing = True
             existing = existing_by_path
 
-        # Read metadata from PNG
-        metadata = TokenMetadata.read_token_metadata(filepath)
+        try:
+            # Read metadata from PNG
+            metadata = safe_file_op(TokenMetadata.read_token_metadata, filepath, timeout=get_file_io_timeout())
 
-        # ALWAYS write metadata to PNG to keep DB and PNG in sync
-        # Database is source of truth; PNG mirrors it
-        metadata['ImageType'] = image_type
+            # ALWAYS write metadata to PNG to keep DB and PNG in sync
+            # Database is source of truth; PNG mirrors it
+            metadata['ImageType'] = image_type
 
-        # Add tag values to metadata
-        for tag_key, tag_value in tag_values.items():
-            if tag_value:
-                metadata[tag_key] = tag_value
+            # Add tag values to metadata
+            for tag_key, tag_value in tag_values.items():
+                if tag_value:
+                    metadata[tag_key] = tag_value
 
-        # Add DateAdded if not present (only for new files)
-        if not existing and not metadata.get('DateAdded'):
-            metadata['DateAdded'] = datetime.now().isoformat()
+            # Add DateAdded if not present (only for new files)
+            if not existing and not metadata.get('DateAdded'):
+                metadata['DateAdded'] = datetime.now().isoformat()
 
-        # ALWAYS write updated metadata back to PNG
-        if not TokenMetadata.write_token_metadata(filepath, metadata):
-            print(f"Warning: Failed to write metadata to PNG for {filepath}")
-            # Continue anyway - database update is more critical
+            # ALWAYS write updated metadata back to PNG
+            if not safe_file_op(TokenMetadata.write_token_metadata, filepath, metadata, timeout=get_file_io_timeout()):
+                print(f"Warning: Failed to write metadata to PNG for {filepath}")
+                # Continue anyway - database update is more critical
+        except FileOpTimeout:
+            return jsonify({'success': False, 'error': 'File could not be read (network timeout)'}), 503
+
+        try:
+            file_modified = datetime.fromtimestamp(
+                safe_file_op(os.path.getmtime, filepath, timeout=get_file_io_timeout())
+            ).isoformat()
+        except FileOpTimeout:
+            return jsonify({'success': False, 'error': 'File could not be accessed (network timeout)'}), 503
 
         # Prepare token data
         token_data = {
@@ -675,7 +766,7 @@ def add_file_reference():
             'Campaign': metadata.get('Campaign'),
             'Notes': metadata.get('Notes'),
             'DateAdded': metadata.get('DateAdded'),
-            'file_modified': datetime.fromtimestamp(os.path.getmtime(filepath)).isoformat(),
+            'file_modified': file_modified,
             'Scale': metadata.get('Scale'),
             'Theme': metadata.get('Theme'),
             'Type': metadata.get('Type'),
@@ -740,6 +831,7 @@ def add_file_references_batch():
             'updated': 0,
             'skipped': 0,
             'errors': 0,
+            'timed_out': 0,
             'by_subfolder': {}
         }
 
@@ -770,20 +862,20 @@ def add_file_references_batch():
                     continue
 
                 try:
-                    if not os.path.exists(filepath):
+                    if not safe_file_op(os.path.exists, filepath, timeout=get_file_io_timeout()):
                         results['errors'] += 1
                         subfolder_results['errors'] += 1
                         continue
 
                     # Calculate hash
-                    file_hash = calculate_file_hash(filepath)
+                    file_hash = safe_file_op(calculate_file_hash, filepath, timeout=get_file_io_timeout())
 
                     # Check for existing
                     existing = db.find_by_hash(file_hash)
                     overwrite_existing = (action == 'overwrite')
 
                     # Read and update metadata
-                    metadata = TokenMetadata.read_token_metadata(filepath)
+                    metadata = safe_file_op(TokenMetadata.read_token_metadata, filepath, timeout=get_file_io_timeout())
                     metadata['ImageType'] = image_type
 
                     # Apply tags from subfolder assignment
@@ -796,7 +888,7 @@ def add_file_references_batch():
                         metadata['DateAdded'] = datetime.now().isoformat()
 
                     # Write metadata to PNG
-                    TokenMetadata.write_token_metadata(filepath, metadata)
+                    safe_file_op(TokenMetadata.write_token_metadata, filepath, metadata, timeout=get_file_io_timeout())
 
                     # Determine filename: use new_filename if provided (rename case), otherwise use basename
                     display_filename = secure_filename(new_filename) if new_filename else os.path.basename(filepath)
@@ -813,7 +905,9 @@ def add_file_references_batch():
                         'Campaign': metadata.get('Campaign'),
                         'Notes': metadata.get('Notes'),
                         'DateAdded': metadata.get('DateAdded'),
-                        'file_modified': datetime.fromtimestamp(os.path.getmtime(filepath)).isoformat(),
+                        'file_modified': datetime.fromtimestamp(
+                            safe_file_op(os.path.getmtime, filepath, timeout=get_file_io_timeout())
+                        ).isoformat(),
                         'Scale': metadata.get('Scale'),
                         'Theme': metadata.get('Theme'),
                         'Type': metadata.get('Type'),
@@ -846,6 +940,10 @@ def add_file_references_batch():
                         db.mark_missing(token_id, False)
                         db.update_last_verified(token_id)
 
+                except FileOpTimeout:
+                    print(f"Timeout accessing file (possible network issue): {filepath}")
+                    results['timed_out'] += 1
+                    subfolder_results['errors'] += 1
                 except Exception as e:
                     print(f"Error processing {filepath}: {e}")
                     results['errors'] += 1
@@ -879,7 +977,15 @@ def scan_folder():
         if not folder_path:
             return jsonify({'success': False, 'error': 'No folder_path provided'}), 400
 
-        if not os.path.exists(folder_path) or not os.path.isdir(folder_path):
+        def _folder_is_valid():
+            return os.path.exists(folder_path) and os.path.isdir(folder_path)
+
+        try:
+            folder_valid = safe_file_op(_folder_is_valid, timeout=get_file_io_timeout())
+        except FileOpTimeout:
+            return jsonify({'success': False, 'error': 'Folder could not be accessed (network timeout)'}), 503
+
+        if not folder_valid:
             return jsonify({'success': False, 'error': 'Folder not found'}), 404
 
         files_found = []
@@ -1061,8 +1167,14 @@ def bulk_delete_tokens():
                 continue
 
             # Delete file
-            if os.path.exists(token['filepath']):
-                os.remove(token['filepath'])
+            def _remove_if_exists():
+                if os.path.exists(token['filepath']):
+                    os.remove(token['filepath'])
+
+            try:
+                safe_file_op(_remove_if_exists, timeout=get_file_io_timeout())
+            except FileOpTimeout:
+                print(f"Timeout removing file (possible network issue): {token['filepath']}")
 
             # Delete from database
             if db.delete_token(token_id):
@@ -1165,10 +1277,10 @@ def rename_tag_value(field):
         for token in affected:
             filepath = token['filepath']
             try:
-                if os.path.exists(filepath):
-                    current = TokenMetadata.read_token_metadata(filepath)
+                if safe_file_op(os.path.exists, filepath, timeout=get_file_io_timeout()):
+                    current = safe_file_op(TokenMetadata.read_token_metadata, filepath, timeout=get_file_io_timeout())
                     current[meta_key] = new_val
-                    TokenMetadata.write_token_metadata(filepath, current)
+                    safe_file_op(TokenMetadata.write_token_metadata, filepath, current, timeout=get_file_io_timeout())
                 updated += 1
             except Exception as e:
                 app.logger.error(f"Failed to rewrite PNG {filepath}: {e}")
@@ -1186,12 +1298,19 @@ def rescan():
     try:
         print("Starting local folder scan...")
         results = scanner.scan_and_sync()
-        scanner.scan_pdfs_and_sync()
-        return jsonify({
+        pdf_results = scanner.scan_pdfs_and_sync()
+
+        response = {
             'success': True,
             'results': results,
             'mode': 'local'
-        })
+        }
+
+        timed_out = results.get('timed_out', 0) + pdf_results.get('timed_out', 0)
+        if timed_out > 0:
+            response['warning'] = f"{timed_out} file(s) could not be accessed (network timeout)"
+
+        return jsonify(response)
 
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -1246,14 +1365,24 @@ def get_thumbnail(token_id):
 
         filepath = token['filepath']
 
-        if not os.path.exists(filepath):
+        try:
+            file_exists = safe_file_op(os.path.exists, filepath, timeout=get_file_io_timeout())
+        except FileOpTimeout:
+            db.mark_missing(token_id, True)
+            return _timeout_response('image/png', use_placeholder=True)
+
+        if not file_exists:
             return jsonify({'success': False, 'error': 'Image file not found'}), 404
 
         # Generate thumbnail in-memory
-        thumbnail_bytes = generate_thumbnail_in_memory(
-            filepath,
-            tuple(config.get('thumbnail_size', [150, 150]))
-        )
+        try:
+            thumbnail_bytes = generate_thumbnail_in_memory(
+                filepath,
+                tuple(config.get('thumbnail_size', [150, 150]))
+            )
+        except FileOpTimeout:
+            db.mark_missing(token_id, True)
+            return _timeout_response('image/png', use_placeholder=True)
 
         if thumbnail_bytes is None:
             # Fallback: return original image
@@ -1289,6 +1418,15 @@ def get_image(token_id):
             mimetype = 'image/jpeg'
         else:
             mimetype = 'image/png'  # default fallback
+
+        try:
+            file_exists = safe_file_op(os.path.exists, filepath, timeout=get_file_io_timeout())
+        except FileOpTimeout:
+            db.mark_missing(token_id, True)
+            return _timeout_response(mimetype, use_placeholder=False)
+
+        if not file_exists:
+            return jsonify({'success': False, 'error': 'Image file not found'}), 404
 
         return send_file(filepath, mimetype=mimetype)
 
@@ -1342,7 +1480,7 @@ def update_config():
     try:
         data = request.get_json()
 
-        for key in ['thumbnail_size', 'watch_folder', 'port', 'host']:
+        for key in ['thumbnail_size', 'watch_folder', 'port', 'host', 'file_io_timeout_seconds']:
             if key in data:
                 config[key] = data[key]
 
@@ -1457,8 +1595,14 @@ def delete_audio_file(audio_id):
             return jsonify({'success': False, 'error': 'Audio file not found'}), 404
 
         # Delete the file
-        if os.path.exists(audio['filepath']):
-            os.remove(audio['filepath'])
+        def _remove_if_exists():
+            if os.path.exists(audio['filepath']):
+                os.remove(audio['filepath'])
+
+        try:
+            safe_file_op(_remove_if_exists, timeout=get_file_io_timeout())
+        except FileOpTimeout:
+            print(f"Timeout removing file (possible network issue): {audio['filepath']}")
 
         # Delete from database
         if db.delete_audio_file(audio_id):
@@ -1491,7 +1635,14 @@ def stream_audio(audio_id):
             return jsonify({'success': False, 'error': 'Audio file not found'}), 404
 
         filepath = audio['filepath']
-        if not os.path.exists(filepath):
+
+        try:
+            file_exists = safe_file_op(os.path.exists, filepath, timeout=get_file_io_timeout())
+        except FileOpTimeout:
+            db.mark_audio_missing(audio_id, True)
+            return _timeout_response(use_placeholder=False)
+
+        if not file_exists:
             return jsonify({'success': False, 'error': 'Audio file not found on disk'}), 404
 
         # Determine MIME type
@@ -1577,14 +1728,30 @@ def add_audio_file_reference():
         if not filepath:
             return jsonify({'success': False, 'error': 'No filepath provided'}), 400
 
-        if not os.path.exists(filepath):
+        try:
+            file_exists = safe_file_op(os.path.exists, filepath, timeout=get_file_io_timeout())
+        except FileOpTimeout:
+            return jsonify({'success': False, 'error': 'File could not be accessed (network timeout)'}), 503
+
+        if not file_exists:
             return jsonify({'success': False, 'error': 'File not found'}), 404
 
         if not is_supported_audio(filepath):
             return jsonify({'success': False, 'error': 'Unsupported audio format'}), 400
 
-        # Calculate hash
-        file_hash = calculate_file_hash(filepath)
+        try:
+            # Calculate hash
+            file_hash = safe_file_op(calculate_file_hash, filepath, timeout=get_file_io_timeout())
+
+            # Get audio metadata
+            audio_meta = safe_file_op(get_audio_metadata, filepath, timeout=get_file_io_timeout())
+
+            file_modified = datetime.fromtimestamp(
+                safe_file_op(os.path.getmtime, filepath, timeout=get_file_io_timeout())
+            ).isoformat()
+            file_size = safe_file_op(os.path.getsize, filepath, timeout=get_file_io_timeout())
+        except FileOpTimeout:
+            return jsonify({'success': False, 'error': 'File could not be read (network timeout)'}), 503
 
         # Check for existing duplicate
         existing = db.find_audio_by_hash(file_hash)
@@ -1596,9 +1763,6 @@ def add_audio_file_reference():
                 'existing_audio': existing
             }), 409
 
-        # Get audio metadata
-        audio_meta = get_audio_metadata(filepath)
-
         # Prepare audio data
         audio_data = {
             'filepath': filepath,
@@ -1606,11 +1770,11 @@ def add_audio_file_reference():
             'Name': os.path.splitext(os.path.basename(filepath))[0],
             'AudioType': audio_type,
             'DateAdded': datetime.now().isoformat(),
-            'file_modified': datetime.fromtimestamp(os.path.getmtime(filepath)).isoformat(),
+            'file_modified': file_modified,
             'file_hash': file_hash,
             'duration_seconds': audio_meta.get('duration_seconds') if audio_meta else None,
             'format': audio_meta.get('format') if audio_meta else os.path.splitext(filepath)[1][1:].upper(),
-            'file_size': os.path.getsize(filepath)
+            'file_size': file_size
         }
         audio_data.update(tag_values)
 
@@ -1744,8 +1908,14 @@ def delete_pdf_file(pdf_id):
         if not pdf:
             return jsonify({'success': False, 'error': 'PDF file not found'}), 404
 
-        if os.path.exists(pdf['filepath']):
-            os.remove(pdf['filepath'])
+        def _remove_if_exists():
+            if os.path.exists(pdf['filepath']):
+                os.remove(pdf['filepath'])
+
+        try:
+            safe_file_op(_remove_if_exists, timeout=get_file_io_timeout())
+        except FileOpTimeout:
+            print(f"Timeout removing file (possible network issue): {pdf['filepath']}")
 
         if db.delete_pdf_file(pdf_id):
             return jsonify({'success': True})
@@ -1765,7 +1935,14 @@ def serve_pdf(pdf_id):
             return jsonify({'success': False, 'error': 'PDF file not found'}), 404
 
         filepath = pdf['filepath']
-        if not os.path.exists(filepath):
+
+        try:
+            file_exists = safe_file_op(os.path.exists, filepath, timeout=get_file_io_timeout())
+        except FileOpTimeout:
+            db.mark_pdf_missing(pdf_id, True)
+            return _timeout_response('application/pdf', use_placeholder=False)
+
+        if not file_exists:
             return jsonify({'success': False, 'error': 'PDF file not found on disk'}), 404
 
         return send_file(filepath, mimetype='application/pdf')
@@ -1783,13 +1960,24 @@ def get_pdf_thumbnail(pdf_id):
             return jsonify({'success': False, 'error': 'PDF file not found'}), 404
 
         filepath = pdf['filepath']
-        if not os.path.exists(filepath):
+
+        try:
+            file_exists = safe_file_op(os.path.exists, filepath, timeout=get_file_io_timeout())
+        except FileOpTimeout:
+            db.mark_pdf_missing(pdf_id, True)
+            return _timeout_response('image/png', use_placeholder=True)
+
+        if not file_exists:
             return jsonify({'success': False, 'error': 'PDF file not found on disk'}), 404
 
-        thumbnail_bytes = generate_pdf_thumbnail_in_memory(
-            filepath,
-            tuple(config.get('thumbnail_size', [150, 150]))
-        )
+        try:
+            thumbnail_bytes = generate_pdf_thumbnail_in_memory(
+                filepath,
+                tuple(config.get('thumbnail_size', [150, 150]))
+            )
+        except FileOpTimeout:
+            db.mark_pdf_missing(pdf_id, True)
+            return _timeout_response('image/png', use_placeholder=True)
 
         if thumbnail_bytes is None:
             return jsonify({'success': False, 'error': 'Failed to generate thumbnail'}), 500
@@ -1839,14 +2027,29 @@ def add_pdf_file_reference():
         if not filepath:
             return jsonify({'success': False, 'error': 'No filepath provided'}), 400
 
-        if not os.path.exists(filepath):
+        try:
+            file_exists = safe_file_op(os.path.exists, filepath, timeout=get_file_io_timeout())
+        except FileOpTimeout:
+            return jsonify({'success': False, 'error': 'File could not be accessed (network timeout)'}), 503
+
+        if not file_exists:
             return jsonify({'success': False, 'error': 'File not found'}), 404
 
         if not is_supported_pdf(filepath):
             return jsonify({'success': False, 'error': 'Unsupported file format'}), 400
 
-        with open(filepath, 'rb') as f:
-            file_hash = hashlib.sha256(f.read()).hexdigest()
+        def _hash_pdf():
+            with open(filepath, 'rb') as f:
+                return hashlib.sha256(f.read()).hexdigest()
+
+        try:
+            file_hash = safe_file_op(_hash_pdf, timeout=get_file_io_timeout())
+            pdf_meta = safe_file_op(get_pdf_metadata, filepath, timeout=get_file_io_timeout())
+            file_modified = datetime.fromtimestamp(
+                safe_file_op(os.path.getmtime, filepath, timeout=get_file_io_timeout())
+            ).isoformat()
+        except FileOpTimeout:
+            return jsonify({'success': False, 'error': 'File could not be read (network timeout)'}), 503
 
         existing = db.find_pdf_by_hash(file_hash)
 
@@ -1857,15 +2060,13 @@ def add_pdf_file_reference():
                 'existing_pdf': existing
             }), 409
 
-        pdf_meta = get_pdf_metadata(filepath)
-
         pdf_data = {
             'filepath': filepath,
             'filename': os.path.basename(filepath),
             'Name': os.path.splitext(os.path.basename(filepath))[0],
             'ImageType': image_type,
             'DateAdded': datetime.now().isoformat(),
-            'file_modified': datetime.fromtimestamp(os.path.getmtime(filepath)).isoformat(),
+            'file_modified': file_modified,
             'file_hash': file_hash,
             'page_count': pdf_meta.get('page_count') if pdf_meta else None
         }

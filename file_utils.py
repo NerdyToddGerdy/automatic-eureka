@@ -5,9 +5,63 @@ Handles file hashing, duplicate detection, and file verification.
 
 import hashlib
 import os
+import threading
 from PIL import Image
 import io
 from typing import Optional, Dict
+
+DEFAULT_FILE_IO_TIMEOUT = 5  # seconds
+
+
+class FileOpTimeout(Exception):
+    """Raised when a safe_file_op-wrapped call exceeds its timeout."""
+
+
+def safe_file_op(fn, *args, timeout=DEFAULT_FILE_IO_TIMEOUT, **kwargs):
+    """
+    Run fn(*args, **kwargs) in a background thread, bounded to `timeout`
+    seconds, so a hung syscall (dead NAS/SMB mount, ejected drive) can't
+    block the caller forever.
+
+    Raises FileOpTimeout if it doesn't finish in time. Any other exception
+    raised by fn propagates normally, so existing error handling at call
+    sites is unaffected.
+
+    Deliberately uses a raw daemon threading.Thread rather than
+    concurrent.futures.ThreadPoolExecutor. Python can't forcibly kill a
+    thread stuck in a blocking syscall, and ThreadPoolExecutor has two traps
+    for that case: (1) its context manager calls shutdown(wait=True) on
+    exit, which blocks until the stuck worker finishes - i.e. for the exact
+    same unbounded duration this function exists to avoid - regardless of
+    the future's own timeout; and (2) its worker threads are non-daemon and
+    registered with a process-wide atexit hook that joins every worker ever
+    created, so a single permanently-stuck call would hang the whole
+    process at shutdown, not just this call. A daemon thread that we simply
+    abandon on timeout has neither problem: the calling thread is never
+    blocked past `timeout`, and the interpreter won't wait for daemon
+    threads on exit.
+    """
+    result: dict = {}
+
+    def _runner():
+        try:
+            result['value'] = fn(*args, **kwargs)
+        except Exception as e:
+            result['error'] = e
+
+    thread = threading.Thread(target=_runner, daemon=True)
+    thread.start()
+    thread.join(timeout=timeout)
+
+    if thread.is_alive():
+        # Still running - abandon it (it's a daemon thread, so this won't
+        # block process exit) and report the timeout to the caller.
+        raise FileOpTimeout(f"Timed out after {timeout}s")
+
+    if 'error' in result:
+        raise result['error']
+
+    return result.get('value')
 
 
 def calculate_file_hash(filepath: str) -> str:

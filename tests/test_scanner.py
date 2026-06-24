@@ -9,6 +9,7 @@ from datetime import datetime
 import pytest
 from PIL import Image
 
+from file_utils import FileOpTimeout
 from metadata import TokenMetadata
 from scanner import (
     TokenScanner,
@@ -126,7 +127,7 @@ class TestScanAndSync:
 
         results = scanner.scan_and_sync()
 
-        assert results == {'added': 1, 'updated': 0, 'removed': 0, 'errors': 0}
+        assert results == {'added': 1, 'updated': 0, 'removed': 0, 'errors': 0, 'timed_out': 0}
         db_row = scanner.database.get_token_by_filepath(filepath)
         assert db_row['image_type'] == 'Token'
         png_meta = TokenMetadata.read_token_metadata(filepath)
@@ -154,7 +155,7 @@ class TestScanAndSync:
 
         results = scanner.scan_and_sync()
 
-        assert results == {'added': 0, 'updated': 0, 'removed': 0, 'errors': 0}
+        assert results == {'added': 0, 'updated': 0, 'removed': 0, 'errors': 0, 'timed_out': 0}
 
     def test_get_file_info_none_counts_as_error(self, scanner, temp_dir, mocker):
         filepath = os.path.join(temp_dir, 'token.png')
@@ -237,7 +238,7 @@ class TestUpdateExistingFile:
 class TestVerifyAllReferences:
     def test_empty_database(self, scanner):
         results = scanner.verify_all_references()
-        assert results == {'verified': 0, 'missing': [], 'errors': 0}
+        assert results == {'verified': 0, 'missing': [], 'errors': 0, 'timed_out': 0}
 
     def test_existing_and_missing_files(self, scanner, temp_dir):
         present_path = os.path.join(temp_dir, 'present.png')
@@ -286,7 +287,7 @@ class TestScanAudioAndSync:
 
         results = scanner.scan_audio_and_sync()
 
-        assert results == {'added': 1, 'updated': 0, 'removed': 0, 'errors': 0}
+        assert results == {'added': 1, 'updated': 0, 'removed': 0, 'errors': 0, 'timed_out': 0}
         db_row = scanner.database.get_audio_file_by_filepath(filepath)
         assert db_row is not None
         assert db_row['file_hash'] == hashlib.sha256(content).hexdigest()
@@ -301,7 +302,7 @@ class TestScanAudioAndSync:
 
         results = scanner.scan_audio_and_sync()
 
-        assert results == {'added': 0, 'updated': 0, 'removed': 0, 'errors': 0}
+        assert results == {'added': 0, 'updated': 0, 'removed': 0, 'errors': 0, 'timed_out': 0}
 
     def test_modified_audio_file_gets_updated(self, scanner, temp_dir):
         filepath = os.path.join(temp_dir, 'song.mp3')
@@ -336,7 +337,7 @@ class TestAddNewAudioFile:
 class TestVerifyAllAudioReferences:
     def test_empty_database(self, scanner):
         results = scanner.verify_all_audio_references()
-        assert results == {'verified': 0, 'missing': [], 'errors': 0}
+        assert results == {'verified': 0, 'missing': [], 'errors': 0, 'timed_out': 0}
 
     def test_existing_and_missing_audio_files(self, scanner, temp_dir):
         present_path = os.path.join(temp_dir, 'present.mp3')
@@ -379,7 +380,7 @@ class TestScanPdfsAndSync:
 
         results = scanner.scan_pdfs_and_sync()
 
-        assert results == {'added': 1, 'updated': 0, 'removed': 0, 'errors': 0}
+        assert results == {'added': 1, 'updated': 0, 'removed': 0, 'errors': 0, 'timed_out': 0}
         db_row = scanner.database.get_pdf_file_by_filepath(filepath)
         assert db_row is not None
         assert db_row['file_hash'] == hashlib.sha256(content).hexdigest()
@@ -403,7 +404,7 @@ class TestScanPdfsAndSync:
 
         results = scanner.scan_pdfs_and_sync()
 
-        assert results == {'added': 0, 'updated': 0, 'removed': 0, 'errors': 0}
+        assert results == {'added': 0, 'updated': 0, 'removed': 0, 'errors': 0, 'timed_out': 0}
 
     def test_modified_pdf_file_gets_updated(self, scanner, temp_dir):
         filepath = os.path.join(temp_dir, 'rules.pdf')
@@ -438,7 +439,7 @@ class TestAddNewPdfFile:
 class TestVerifyAllPdfReferences:
     def test_empty_database(self, scanner):
         results = scanner.verify_all_pdf_references()
-        assert results == {'verified': 0, 'missing': [], 'errors': 0}
+        assert results == {'verified': 0, 'missing': [], 'errors': 0, 'timed_out': 0}
 
     def test_existing_and_missing_pdf_files(self, scanner, temp_dir):
         present_path = os.path.join(temp_dir, 'present.pdf')
@@ -453,6 +454,98 @@ class TestVerifyAllPdfReferences:
         assert results['verified'] == 1
         assert len(results['missing']) == 1
         assert results['missing'][0]['filepath'] == missing_path
+
+
+class TestFileIOTimeoutHandling:
+    """
+    A hung NAS/SMB mount or ejected drive shouldn't block a scan or
+    verification pass forever. These tests simulate that by making
+    scanner.safe_file_op raise FileOpTimeout unconditionally, standing in
+    for a blocking call that never returns.
+    """
+
+    @pytest.fixture
+    def timeout_everywhere(self, mocker):
+        return mocker.patch('scanner.safe_file_op', side_effect=FileOpTimeout('simulated timeout'))
+
+    def test_scan_and_sync_counts_timeout_and_marks_existing_missing(self, scanner, temp_dir, timeout_everywhere):
+        filepath = os.path.join(temp_dir, 'a.png')
+        make_png(filepath)
+        scanner.database.add_token({'filepath': filepath, 'filename': 'a.png', 'ImageType': 'Token'})
+
+        results = scanner.scan_and_sync()
+
+        assert results['timed_out'] == 1
+        assert results['errors'] == 0
+        row = scanner.database.get_token_by_filepath(filepath)
+        assert row['is_missing'] == 1
+
+    def test_add_new_file_returns_false_on_timeout(self, scanner, temp_dir, timeout_everywhere):
+        filepath = os.path.join(temp_dir, 'a.png')
+        make_png(filepath)
+
+        assert scanner.add_new_file(filepath) is False
+
+    def test_verify_all_references_counts_timeout_as_missing(self, scanner, temp_dir, timeout_everywhere):
+        filepath = os.path.join(temp_dir, 'a.png')
+        scanner.database.add_token({'filepath': filepath, 'filename': 'a.png', 'ImageType': 'Token'})
+
+        results = scanner.verify_all_references()
+
+        assert results['timed_out'] == 1
+        assert len(results['missing']) == 1
+
+    def test_scan_audio_and_sync_counts_timeout_and_marks_existing_missing(self, scanner, temp_dir, timeout_everywhere):
+        filepath = os.path.join(temp_dir, 'a.mp3')
+        make_audio_file(filepath)
+        scanner.database.add_audio_file({'filepath': filepath, 'filename': 'a.mp3'})
+
+        results = scanner.scan_audio_and_sync()
+
+        assert results['timed_out'] == 1
+        row = scanner.database.get_audio_file_by_filepath(filepath)
+        assert row['is_missing'] == 1
+
+    def test_add_new_audio_file_returns_false_on_timeout(self, scanner, temp_dir, timeout_everywhere):
+        filepath = os.path.join(temp_dir, 'a.mp3')
+        make_audio_file(filepath)
+
+        assert scanner.add_new_audio_file(filepath) is False
+
+    def test_verify_all_audio_references_counts_timeout_as_missing(self, scanner, temp_dir, timeout_everywhere):
+        filepath = os.path.join(temp_dir, 'a.mp3')
+        scanner.database.add_audio_file({'filepath': filepath, 'filename': 'a.mp3'})
+
+        results = scanner.verify_all_audio_references()
+
+        assert results['timed_out'] == 1
+        assert len(results['missing']) == 1
+
+    def test_scan_pdfs_and_sync_counts_timeout_and_marks_existing_missing(self, scanner, temp_dir, timeout_everywhere):
+        filepath = os.path.join(temp_dir, 'a.pdf')
+        make_pdf_file(filepath)
+        scanner.database.add_pdf_file({'filepath': filepath, 'filename': 'a.pdf'})
+
+        results = scanner.scan_pdfs_and_sync()
+
+        assert results['timed_out'] == 1
+        row = scanner.database.get_pdf_file_by_filepath(filepath)
+        assert row['is_missing'] == 1
+
+    def test_add_new_pdf_file_returns_false_on_timeout(self, scanner, temp_dir, timeout_everywhere):
+        filepath = os.path.join(temp_dir, 'a.pdf')
+        make_pdf_file(filepath)
+
+        assert scanner.add_new_pdf_file(filepath) is False
+
+    def test_verify_all_pdf_references_counts_timeout_as_missing(self, scanner, temp_dir, timeout_everywhere):
+        filepath = os.path.join(temp_dir, 'a.pdf')
+        scanner.database.add_pdf_file({'filepath': filepath, 'filename': 'a.pdf'})
+
+        results = scanner.verify_all_pdf_references()
+
+        assert results['timed_out'] == 1
+        assert len(results['missing']) == 1
 
 
 class TestTokenFolderEventHandlerPathMatching:

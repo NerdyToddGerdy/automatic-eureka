@@ -3,6 +3,7 @@ Tests for file_utils module.
 Tests file hashing, duplicate detection, and file verification functions.
 """
 import os
+import time
 import pytest
 from PIL import Image
 from file_utils import (
@@ -10,8 +11,43 @@ from file_utils import (
     verify_file_exists,
     find_duplicates,
     get_file_size_mb,
-    get_file_info_summary
+    get_file_info_summary,
+    safe_file_op,
+    FileOpTimeout,
 )
+
+
+class TestSafeFileOp:
+    """Tests for safe_file_op, the timeout-bounded file-operation wrapper."""
+
+    def test_fast_function_returns_real_result(self):
+        """A function that finishes well within the timeout should return normally."""
+        assert safe_file_op(lambda: 1 + 1, timeout=1) == 2
+
+    def test_passes_args_and_kwargs_through(self):
+        def add(a, b, c=0):
+            return a + b + c
+
+        assert safe_file_op(add, 1, 2, timeout=1, c=3) == 6
+
+    def test_slow_function_raises_file_op_timeout(self):
+        """A function that exceeds the timeout should raise FileOpTimeout, not hang."""
+        start = time.monotonic()
+
+        with pytest.raises(FileOpTimeout):
+            safe_file_op(time.sleep, 2, timeout=0.2)
+
+        elapsed = time.monotonic() - start
+        # Should return promptly once the timeout fires, not wait for the full sleep
+        assert elapsed < 1.5
+
+    def test_other_exceptions_propagate_normally(self):
+        """A real error from the wrapped function should not be swallowed or relabeled."""
+        def boom():
+            raise ValueError("nope")
+
+        with pytest.raises(ValueError):
+            safe_file_op(boom, timeout=1)
 
 
 class TestCalculateFileHash:

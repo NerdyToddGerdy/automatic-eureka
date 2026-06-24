@@ -9,6 +9,8 @@ from database import TokenDatabase
 from datetime import datetime
 import hashlib
 
+from file_utils import safe_file_op, FileOpTimeout, DEFAULT_FILE_IO_TIMEOUT
+
 # Supported audio extensions
 AUDIO_EXTENSIONS = {'.mp3', '.wav', '.ogg', '.m4a', '.flac'}
 
@@ -80,16 +82,20 @@ def get_audio_metadata(filepath: str) -> Optional[dict]:
 class TokenScanner:
     """Scans folders for PNG files and manages token inventory."""
 
-    def __init__(self, database: TokenDatabase, token_folder: Optional[str] = None):
+    def __init__(self, database: TokenDatabase, token_folder: Optional[str] = None,
+                 file_io_timeout: int = DEFAULT_FILE_IO_TIMEOUT):
         """
         Initialize the scanner.
 
         Args:
             database: TokenDatabase instance
             token_folder: Optional path to folder for local scanning (Reference Mode doesn't need this)
+            file_io_timeout: Per-file-operation timeout in seconds, so a hung NAS/SMB mount
+                can't block a scan or verification pass indefinitely
         """
         self.token_folder = token_folder
         self.database = database
+        self.file_io_timeout = file_io_timeout
 
     def find_image_files(self) -> List[str]:
         """
@@ -126,7 +132,8 @@ class TokenScanner:
             'added': 0,
             'updated': 0,
             'removed': 0,
-            'errors': 0
+            'errors': 0,
+            'timed_out': 0
         }
 
         # Find all image files
@@ -140,7 +147,7 @@ class TokenScanner:
                     progress_callback(i + 1, len(image_files), filepath)
 
                 # Get file info and metadata from PNG
-                file_info = TokenMetadata.get_file_info(filepath)
+                file_info = safe_file_op(TokenMetadata.get_file_info, filepath, timeout=self.file_io_timeout)
 
                 if file_info is None:
                     results['errors'] += 1
@@ -153,13 +160,15 @@ class TokenScanner:
                     # Add DateAdded if missing
                     if not file_info.get('DateAdded'):
                         file_info['DateAdded'] = datetime.now().isoformat()
-                        TokenMetadata.update_metadata(filepath, {'DateAdded': file_info['DateAdded']})
+                        safe_file_op(TokenMetadata.update_metadata, filepath,
+                                     {'DateAdded': file_info['DateAdded']}, timeout=self.file_io_timeout)
 
                     # CRITICAL: If ImageType is None, default to 'Token' ONLY for new files
                     if file_info.get('ImageType') is None:
                         file_info['ImageType'] = 'Token'
                         # Write this default back to PNG to maintain DB-PNG sync
-                        TokenMetadata.update_metadata(filepath, {'ImageType': 'Token'})
+                        safe_file_op(TokenMetadata.update_metadata, filepath,
+                                     {'ImageType': 'Token'}, timeout=self.file_io_timeout)
 
                     # New token - add to database
                     if self.database.add_token(file_info):
@@ -180,6 +189,12 @@ class TokenScanner:
                         else:
                             results['errors'] += 1
 
+            except FileOpTimeout:
+                print(f"Timeout accessing file (possible network issue): {filepath}")
+                results['timed_out'] += 1
+                existing = self.database.get_token_by_filepath(filepath)
+                if existing:
+                    self.database.mark_missing(existing['id'], True)
             except Exception as e:
                 print(f"Error processing {filepath}: {e}")
                 results['errors'] += 1
@@ -203,7 +218,7 @@ class TokenScanner:
         """
         try:
             # Get file info and metadata
-            file_info = TokenMetadata.get_file_info(filepath)
+            file_info = safe_file_op(TokenMetadata.get_file_info, filepath, timeout=self.file_io_timeout)
 
             if file_info is None:
                 return False
@@ -211,11 +226,15 @@ class TokenScanner:
             # Add DateAdded if missing
             if not file_info.get('DateAdded'):
                 file_info['DateAdded'] = datetime.now().isoformat()
-                TokenMetadata.update_metadata(filepath, {'DateAdded': file_info['DateAdded']})
+                safe_file_op(TokenMetadata.update_metadata, filepath,
+                             {'DateAdded': file_info['DateAdded']}, timeout=self.file_io_timeout)
 
             # Add to database
             return self.database.add_token(file_info) is not None
 
+        except FileOpTimeout:
+            print(f"Timeout adding new file (possible network issue): {filepath}")
+            return False
         except Exception as e:
             print(f"Error adding new file {filepath}: {e}")
             return False
@@ -232,7 +251,7 @@ class TokenScanner:
         """
         try:
             # Get updated file info and metadata
-            file_info = TokenMetadata.get_file_info(filepath)
+            file_info = safe_file_op(TokenMetadata.get_file_info, filepath, timeout=self.file_io_timeout)
 
             if file_info is None:
                 return False
@@ -240,6 +259,9 @@ class TokenScanner:
             # Update database
             return self.database.update_token_by_filepath(filepath, file_info)
 
+        except FileOpTimeout:
+            print(f"Timeout updating file (possible network issue): {filepath}")
+            return False
         except Exception as e:
             print(f"Error updating file {filepath}: {e}")
             return False
@@ -260,7 +282,8 @@ class TokenScanner:
         results = {
             'verified': 0,
             'missing': [],
-            'errors': 0
+            'errors': 0,
+            'timed_out': 0
         }
 
         try:
@@ -273,7 +296,10 @@ class TokenScanner:
 
                 try:
                     # Check if file exists
-                    if os.path.exists(filepath) and os.path.isfile(filepath):
+                    def _check():
+                        return os.path.exists(filepath) and os.path.isfile(filepath)
+
+                    if safe_file_op(_check, timeout=self.file_io_timeout):
                         # File exists - mark as not missing
                         self.database.mark_missing(token_id, False)
                         self.database.update_last_verified(token_id, datetime.now().isoformat())
@@ -284,6 +310,11 @@ class TokenScanner:
                         results['missing'].append(token)
                         print(f"Missing file: {filepath}")
 
+                except FileOpTimeout:
+                    print(f"Timeout verifying file (possible network issue): {filepath}")
+                    results['timed_out'] += 1
+                    self.database.mark_missing(token_id, True)
+                    results['missing'].append(token)
                 except Exception as e:
                     print(f"Error verifying {filepath}: {e}")
                     results['errors'] += 1
@@ -330,7 +361,8 @@ class TokenScanner:
             'added': 0,
             'updated': 0,
             'removed': 0,
-            'errors': 0
+            'errors': 0,
+            'timed_out': 0
         }
 
         # Find all audio files
@@ -344,18 +376,22 @@ class TokenScanner:
 
                 # Get file info
                 filename = os.path.basename(filepath)
-                file_modified = datetime.fromtimestamp(os.path.getmtime(filepath)).isoformat()
+                file_modified = datetime.fromtimestamp(
+                    safe_file_op(os.path.getmtime, filepath, timeout=self.file_io_timeout)
+                ).isoformat()
 
                 # Check if audio file exists in database
                 existing = self.database.get_audio_file_by_filepath(filepath)
 
                 if existing is None:
                     # New audio file - add to database
-                    audio_meta = get_audio_metadata(filepath)
+                    audio_meta = safe_file_op(get_audio_metadata, filepath, timeout=self.file_io_timeout)
 
                     # Calculate file hash
-                    with open(filepath, 'rb') as f:
-                        file_hash = hashlib.sha256(f.read()).hexdigest()
+                    def _hash():
+                        with open(filepath, 'rb') as f:
+                            return hashlib.sha256(f.read()).hexdigest()
+                    file_hash = safe_file_op(_hash, timeout=self.file_io_timeout)
 
                     audio_data = {
                         'filepath': filepath,
@@ -367,7 +403,7 @@ class TokenScanner:
                         'file_hash': file_hash,
                         'duration_seconds': audio_meta.get('duration_seconds') if audio_meta else None,
                         'format': audio_meta.get('format') if audio_meta else os.path.splitext(filename)[1][1:].upper(),
-                        'file_size': os.path.getsize(filepath)
+                        'file_size': safe_file_op(os.path.getsize, filepath, timeout=self.file_io_timeout)
                     }
 
                     if self.database.add_audio_file(audio_data):
@@ -378,12 +414,12 @@ class TokenScanner:
                     # Check if file was modified since last scan
                     if existing['file_modified'] != file_modified:
                         # File was modified - update metadata
-                        audio_meta = get_audio_metadata(filepath)
+                        audio_meta = safe_file_op(get_audio_metadata, filepath, timeout=self.file_io_timeout)
 
                         update_data = {
                             'file_modified': file_modified,
                             'duration_seconds': audio_meta.get('duration_seconds') if audio_meta else existing.get('duration_seconds'),
-                            'file_size': os.path.getsize(filepath)
+                            'file_size': safe_file_op(os.path.getsize, filepath, timeout=self.file_io_timeout)
                         }
 
                         # Preserve existing tags
@@ -398,6 +434,12 @@ class TokenScanner:
                         else:
                             results['errors'] += 1
 
+            except FileOpTimeout:
+                print(f"Timeout accessing audio file (possible network issue): {filepath}")
+                results['timed_out'] += 1
+                existing = self.database.get_audio_file_by_filepath(filepath)
+                if existing:
+                    self.database.mark_audio_missing(existing['id'], True)
             except Exception as e:
                 print(f"Error processing audio file {filepath}: {e}")
                 results['errors'] += 1
@@ -419,14 +461,18 @@ class TokenScanner:
                 return False
 
             filename = os.path.basename(filepath)
-            file_modified = datetime.fromtimestamp(os.path.getmtime(filepath)).isoformat()
+            file_modified = datetime.fromtimestamp(
+                safe_file_op(os.path.getmtime, filepath, timeout=self.file_io_timeout)
+            ).isoformat()
 
             # Get audio metadata
-            audio_meta = get_audio_metadata(filepath)
+            audio_meta = safe_file_op(get_audio_metadata, filepath, timeout=self.file_io_timeout)
 
             # Calculate file hash
-            with open(filepath, 'rb') as f:
-                file_hash = hashlib.sha256(f.read()).hexdigest()
+            def _hash():
+                with open(filepath, 'rb') as f:
+                    return hashlib.sha256(f.read()).hexdigest()
+            file_hash = safe_file_op(_hash, timeout=self.file_io_timeout)
 
             audio_data = {
                 'filepath': filepath,
@@ -438,11 +484,14 @@ class TokenScanner:
                 'file_hash': file_hash,
                 'duration_seconds': audio_meta.get('duration_seconds') if audio_meta else None,
                 'format': audio_meta.get('format') if audio_meta else os.path.splitext(filename)[1][1:].upper(),
-                'file_size': os.path.getsize(filepath)
+                'file_size': safe_file_op(os.path.getsize, filepath, timeout=self.file_io_timeout)
             }
 
             return self.database.add_audio_file(audio_data) is not None
 
+        except FileOpTimeout:
+            print(f"Timeout adding new audio file (possible network issue): {filepath}")
+            return False
         except Exception as e:
             print(f"Error adding new audio file {filepath}: {e}")
             return False
@@ -463,8 +512,10 @@ class TokenScanner:
                 return self.add_new_audio_file(filepath)
 
             # Get updated metadata
-            audio_meta = get_audio_metadata(filepath)
-            file_modified = datetime.fromtimestamp(os.path.getmtime(filepath)).isoformat()
+            audio_meta = safe_file_op(get_audio_metadata, filepath, timeout=self.file_io_timeout)
+            file_modified = datetime.fromtimestamp(
+                safe_file_op(os.path.getmtime, filepath, timeout=self.file_io_timeout)
+            ).isoformat()
 
             # Preserve existing tags
             update_data = {
@@ -483,6 +534,9 @@ class TokenScanner:
 
             return self.database.update_audio_file(existing['id'], update_data)
 
+        except FileOpTimeout:
+            print(f"Timeout updating audio file (possible network issue): {filepath}")
+            return False
         except Exception as e:
             print(f"Error updating audio file {filepath}: {e}")
             return False
@@ -497,7 +551,8 @@ class TokenScanner:
         results = {
             'verified': 0,
             'missing': [],
-            'errors': 0
+            'errors': 0,
+            'timed_out': 0
         }
 
         try:
@@ -508,7 +563,10 @@ class TokenScanner:
                 filepath = audio['filepath']
 
                 try:
-                    if os.path.exists(filepath) and os.path.isfile(filepath):
+                    def _check():
+                        return os.path.exists(filepath) and os.path.isfile(filepath)
+
+                    if safe_file_op(_check, timeout=self.file_io_timeout):
                         self.database.mark_audio_missing(audio_id, False)
                         results['verified'] += 1
                     else:
@@ -516,6 +574,11 @@ class TokenScanner:
                         results['missing'].append(audio)
                         print(f"Missing audio file: {filepath}")
 
+                except FileOpTimeout:
+                    print(f"Timeout verifying audio file (possible network issue): {filepath}")
+                    results['timed_out'] += 1
+                    self.database.mark_audio_missing(audio_id, True)
+                    results['missing'].append(audio)
                 except Exception as e:
                     print(f"Error verifying audio {filepath}: {e}")
                     results['errors'] += 1
@@ -562,7 +625,8 @@ class TokenScanner:
             'added': 0,
             'updated': 0,
             'removed': 0,
-            'errors': 0
+            'errors': 0,
+            'timed_out': 0
         }
 
         pdf_files = self.find_pdf_files()
@@ -573,16 +637,20 @@ class TokenScanner:
                     progress_callback(i + 1, len(pdf_files), filepath)
 
                 filename = os.path.basename(filepath)
-                file_modified = datetime.fromtimestamp(os.path.getmtime(filepath)).isoformat()
+                file_modified = datetime.fromtimestamp(
+                    safe_file_op(os.path.getmtime, filepath, timeout=self.file_io_timeout)
+                ).isoformat()
 
                 existing = self.database.get_pdf_file_by_filepath(filepath)
 
+                def _hash():
+                    with open(filepath, 'rb') as f:
+                        return hashlib.sha256(f.read()).hexdigest()
+
                 if existing is None:
                     # New PDF file - add to database
-                    page_count = get_pdf_page_count(filepath)
-
-                    with open(filepath, 'rb') as f:
-                        file_hash = hashlib.sha256(f.read()).hexdigest()
+                    page_count = safe_file_op(get_pdf_page_count, filepath, timeout=self.file_io_timeout)
+                    file_hash = safe_file_op(_hash, timeout=self.file_io_timeout)
 
                     pdf_data = {
                         'filepath': filepath,
@@ -602,7 +670,7 @@ class TokenScanner:
                 else:
                     # Check if file was modified since last scan
                     if existing['file_modified'] != file_modified:
-                        page_count = get_pdf_page_count(filepath)
+                        page_count = safe_file_op(get_pdf_page_count, filepath, timeout=self.file_io_timeout)
 
                         update_data = {
                             'file_modified': file_modified,
@@ -620,6 +688,12 @@ class TokenScanner:
                         else:
                             results['errors'] += 1
 
+            except FileOpTimeout:
+                print(f"Timeout accessing PDF file (possible network issue): {filepath}")
+                results['timed_out'] += 1
+                existing = self.database.get_pdf_file_by_filepath(filepath)
+                if existing:
+                    self.database.mark_pdf_missing(existing['id'], True)
             except Exception as e:
                 print(f"Error processing PDF file {filepath}: {e}")
                 results['errors'] += 1
@@ -641,12 +715,16 @@ class TokenScanner:
                 return False
 
             filename = os.path.basename(filepath)
-            file_modified = datetime.fromtimestamp(os.path.getmtime(filepath)).isoformat()
+            file_modified = datetime.fromtimestamp(
+                safe_file_op(os.path.getmtime, filepath, timeout=self.file_io_timeout)
+            ).isoformat()
 
-            page_count = get_pdf_page_count(filepath)
+            page_count = safe_file_op(get_pdf_page_count, filepath, timeout=self.file_io_timeout)
 
-            with open(filepath, 'rb') as f:
-                file_hash = hashlib.sha256(f.read()).hexdigest()
+            def _hash():
+                with open(filepath, 'rb') as f:
+                    return hashlib.sha256(f.read()).hexdigest()
+            file_hash = safe_file_op(_hash, timeout=self.file_io_timeout)
 
             pdf_data = {
                 'filepath': filepath,
@@ -661,6 +739,9 @@ class TokenScanner:
 
             return self.database.add_pdf_file(pdf_data) is not None
 
+        except FileOpTimeout:
+            print(f"Timeout adding new PDF file (possible network issue): {filepath}")
+            return False
         except Exception as e:
             print(f"Error adding new PDF file {filepath}: {e}")
             return False
@@ -680,8 +761,10 @@ class TokenScanner:
             if not existing:
                 return self.add_new_pdf_file(filepath)
 
-            page_count = get_pdf_page_count(filepath)
-            file_modified = datetime.fromtimestamp(os.path.getmtime(filepath)).isoformat()
+            page_count = safe_file_op(get_pdf_page_count, filepath, timeout=self.file_io_timeout)
+            file_modified = datetime.fromtimestamp(
+                safe_file_op(os.path.getmtime, filepath, timeout=self.file_io_timeout)
+            ).isoformat()
 
             # Preserve existing tags
             update_data = {
@@ -696,6 +779,9 @@ class TokenScanner:
 
             return self.database.update_pdf_file(existing['id'], update_data)
 
+        except FileOpTimeout:
+            print(f"Timeout updating PDF file (possible network issue): {filepath}")
+            return False
         except Exception as e:
             print(f"Error updating PDF file {filepath}: {e}")
             return False
@@ -710,7 +796,8 @@ class TokenScanner:
         results = {
             'verified': 0,
             'missing': [],
-            'errors': 0
+            'errors': 0,
+            'timed_out': 0
         }
 
         try:
@@ -721,7 +808,10 @@ class TokenScanner:
                 filepath = pdf['filepath']
 
                 try:
-                    if os.path.exists(filepath) and os.path.isfile(filepath):
+                    def _check():
+                        return os.path.exists(filepath) and os.path.isfile(filepath)
+
+                    if safe_file_op(_check, timeout=self.file_io_timeout):
                         self.database.mark_pdf_missing(pdf_id, False)
                         results['verified'] += 1
                     else:
@@ -729,6 +819,11 @@ class TokenScanner:
                         results['missing'].append(pdf)
                         print(f"Missing PDF file: {filepath}")
 
+                except FileOpTimeout:
+                    print(f"Timeout verifying PDF file (possible network issue): {filepath}")
+                    results['timed_out'] += 1
+                    self.database.mark_pdf_missing(pdf_id, True)
+                    results['missing'].append(pdf)
                 except Exception as e:
                     print(f"Error verifying PDF {filepath}: {e}")
                     results['errors'] += 1
