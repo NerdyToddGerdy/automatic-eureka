@@ -55,26 +55,21 @@ Type badges, durations, and inline playback for music, sound effects, ambience, 
 
 ## Installing it locally
 
-**Prerequisites**: Python 3.10+, Node.js 18+
+**Prerequisites**: Python 3.10+ (a single runtime — no Node.js needed)
 
-1. Install Python dependencies:
+1. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
 
-2. Install Node.js dependencies:
+2. Run the desktop app:
    ```bash
-   npm install
+   python3 desktop.py
    ```
 
-3. Run the desktop app:
-   ```bash
-   npm start
-   ```
+A native desktop window opens with Flask running in the background. A green "📌 Reference Mode" indicator confirms files are referenced in place, not copied.
 
-The Electron app launches with Flask running in the background. A green "📌 Reference Mode" indicator confirms files are referenced in place, not copied.
-
-> **Why Electron, not just a browser?** Image Vault only supports Reference Mode — there's no "copy files into a vault folder" mode. Adding files by path requires the absolute file-system paths that only Electron's bridge can provide; a plain browser can't do this.
+> **Why a desktop window, not just a browser?** Image Vault only supports Reference Mode — there's no "copy files into a vault folder" mode. Adding files by path requires real absolute file-system paths, which the desktop app's native file dialog (via [pywebview](https://pywebview.flowrl.com/)) provides; a plain browser can't.
 
 ---
 
