@@ -2,6 +2,7 @@ from flask import Flask, render_template, jsonify, request, send_file, send_from
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 import os
+import sys
 import json
 from datetime import datetime
 from PIL import Image
@@ -9,6 +10,7 @@ import hashlib
 import argparse
 from typing import Optional
 import io
+from platformdirs import user_data_dir
 
 from database import TokenDatabase
 from metadata import TokenMetadata
@@ -17,13 +19,40 @@ from file_utils import calculate_file_hash_from_bytes, safe_file_op, FileOpTimeo
 from cache import get_image_cache
 
 
-app = Flask(__name__)
+def get_app_dir() -> str:
+    """
+    Base directory for bundled assets (templates/, static/).
+
+    Resolved against the script's own location rather than the process's
+    cwd, since a packaged app's cwd is wherever the user launched it from
+    (or a PyInstaller onefile temp extraction dir), not the install dir.
+    """
+    if getattr(sys, 'frozen', False):
+        return sys._MEIPASS
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def get_user_data_dir() -> str:
+    """Base directory for user state (config.json, tokens.db default)."""
+    path = user_data_dir('ImageTagger', appauthor=False)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+APP_DIR = get_app_dir()
+USER_DATA_DIR = get_user_data_dir()
+
+app = Flask(
+    __name__,
+    template_folder=os.path.join(APP_DIR, 'templates'),
+    static_folder=os.path.join(APP_DIR, 'static'),
+)
 CORS(app)
 
 APP_VERSION = "2.1.0"
 
 # Configuration
-CONFIG_FILE = 'config.json'
+CONFIG_FILE = os.path.join(USER_DATA_DIR, 'config.json')
 DEFAULT_CONFIG = {
     'thumbnail_size': [150, 150],
     'watch_folder': True,
@@ -32,7 +61,7 @@ DEFAULT_CONFIG = {
     'file_io_timeout_seconds': 5
 }
 
-PLACEHOLDER_THUMBNAIL_PATH = os.path.join('static', 'img', 'missing.png')
+PLACEHOLDER_THUMBNAIL_PATH = os.path.join(APP_DIR, 'static', 'img', 'missing.png')
 
 config = DEFAULT_CONFIG.copy()
 
@@ -177,7 +206,7 @@ def initialize_app():
     load_config()
 
     # Initialize database
-    db = TokenDatabase(os.environ.get('DB_PATH', 'tokens.db'))
+    db = TokenDatabase(os.environ.get('DB_PATH', os.path.join(USER_DATA_DIR, 'tokens.db')))
 
     # Initialize image cache (100MB default)
     image_cache = get_image_cache(max_size_mb=100)
@@ -301,7 +330,7 @@ def index():
 @app.route('/static/<path:path>')
 def serve_static(path):
     """Serve static files."""
-    return send_from_directory('static', path)
+    return send_from_directory(os.path.join(APP_DIR, 'static'), path)
 
 
 # API Endpoints
