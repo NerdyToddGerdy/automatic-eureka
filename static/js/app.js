@@ -50,31 +50,33 @@ let wizardState = {
 // ============================================================================
 
 /**
- * Detect if running in Electron environment
- * Note: This app is Electron-only. Browser mode has been removed.
+ * Detect if running in the pywebview desktop app (vs a plain browser tab).
+ * Note: This app is desktop-only. Browser mode has been removed.
  */
-const isElectron = typeof window.electronAPI !== 'undefined' && window.electronAPI.isElectron;
+const isDesktop = typeof window.pywebview !== 'undefined' && !!window.pywebview.api;
 
 /**
- * Extract absolute file paths from File objects.
- * Requires Electron - throws error if not available.
+ * Legacy helper kept only so the (currently unreachable) fileInput-based
+ * wizard flow further down still references a real function. Neither a
+ * browser nor pywebview can resolve a real filesystem path from a File
+ * object - there's no equivalent of Electron's webUtils.getPathForFile.
+ * Live upload flows use pickFiles() instead, which gets paths directly
+ * from a native file dialog rather than from File objects.
  */
 function getFilePaths(files) {
-  if (!isElectron) {
-    throw new Error('This app requires the Electron desktop application. Browser mode is not supported.');
-  }
+  throw new Error('getFilePaths() is unsupported under pywebview - use pickFiles() instead.');
+}
 
-  const paths = [];
-  for (const file of files) {
-    const path = window.electronAPI.getFileAbsolutePath(file);
-    if (path) {
-      paths.push({ file, path });
-    } else {
-      console.warn(`Could not get path for file: ${file.name}`);
-      throw new Error(`Could not get path for file: ${file.name}`);
-    }
+/**
+ * Open a native file dialog and return [{ name, path }] for each selected
+ * file. Replaces the <input type=file> + getFileAbsolutePath() pattern.
+ */
+async function pickFiles() {
+  if (!isDesktop) {
+    throw new Error('This app requires the desktop application. Browser mode is not supported.');
   }
-  return paths;
+  const paths = await window.pywebview.api.open_file_dialog();
+  return (paths || []).map(path => ({ name: path.split(/[\\/]/).pop(), path }));
 }
 
 /**
@@ -1289,9 +1291,9 @@ async function openTokenModal(token) {
             filePathText.textContent = data.filepath;
             filePathLink.dataset.filepath = data.filepath;
 
-            // Show "Show in Finder" button only in Electron mode
+            // Show "Show in Finder" button only in the desktop app
             const showInFinderBtn = document.getElementById('showInFinderBtn');
-            if (isElectron && window.electronAPI && window.electronAPI.showItemInFolder) {
+            if (isDesktop && window.pywebview.api.show_item_in_folder) {
                 showInFinderBtn.style.display = 'inline-block';
             } else {
                 showInFinderBtn.style.display = 'none';
@@ -1432,13 +1434,13 @@ async function handleShowInFinder(e) {
         return;
     }
 
-    if (!window.electronAPI || !window.electronAPI.showItemInFolder) {
+    if (!isDesktop || !window.pywebview.api.show_item_in_folder) {
         showError('This feature is only available in desktop mode');
         return;
     }
 
     try {
-        const result = await window.electronAPI.showItemInFolder(filepath);
+        const result = await window.pywebview.api.show_item_in_folder(filepath);
         if (result.success) {
             showSuccess('Opening file location...');
         } else {
@@ -2415,7 +2417,7 @@ async function checkForDuplicatesByPath(filepaths) {
 async function addFileReferencesDirectly(filePaths, imageType, tags = {}) {
     const results = { added: 0, errors: 0, error_files: [] };
 
-    for (const { file, path } of filePaths) {
+    for (const { name, path } of filePaths) {
         try {
             const response = await fetch('/api/tokens/add-reference', {
                 method: 'POST',
@@ -2433,12 +2435,12 @@ async function addFileReferencesDirectly(filePaths, imageType, tags = {}) {
                 results.added++;
             } else {
                 results.errors++;
-                results.error_files.push(file.name);
+                results.error_files.push(name);
             }
         } catch (error) {
             results.errors++;
-            results.error_files.push(file.name);
-            console.error(`Error adding reference for ${file.name}:`, error);
+            results.error_files.push(name);
+            console.error(`Error adding reference for ${name}:`, error);
         }
     }
 
@@ -4231,8 +4233,8 @@ function openAudioModal(audio) {
         filePathText.textContent = audio.filepath;
         filePathLink.dataset.filepath = audio.filepath;
 
-        // Show "Show in Finder" button only in Electron mode
-        if (window.electronAPI && window.electronAPI.showItemInFolder) {
+        // Show "Show in Finder" button only in the desktop app
+        if (isDesktop && window.pywebview.api.show_item_in_folder) {
             showInFinderBtn.style.display = 'inline-block';
         } else {
             showInFinderBtn.style.display = 'none';
@@ -4324,13 +4326,13 @@ async function handleAudioShowInFinder(e) {
         return;
     }
 
-    if (!window.electronAPI || !window.electronAPI.showItemInFolder) {
+    if (!isDesktop || !window.pywebview.api.show_item_in_folder) {
         showError('This feature is only available in desktop mode');
         return;
     }
 
     try {
-        const result = await window.electronAPI.showItemInFolder(filepath);
+        const result = await window.pywebview.api.show_item_in_folder(filepath);
         if (result.success) {
             showSuccess('Opening file location...');
         } else {
@@ -4599,8 +4601,18 @@ function setupImageDropZone() {
     const dropZone = document.getElementById('imageDropZone');
     if (!dropZone) return;
 
-    dropZone.addEventListener('click', () => {
-        document.getElementById('imageFileInputSimple').click();
+    dropZone.addEventListener('click', async () => {
+        let files;
+        try {
+            files = await pickFiles();
+        } catch (error) {
+            showError(error.message);
+            return;
+        }
+        if (files.length > 0) {
+            pendingImageUploadFiles = files;
+            showImageFileList(files);
+        }
     });
 
     dropZone.addEventListener('dragover', (e) => {
@@ -4612,28 +4624,14 @@ function setupImageDropZone() {
         dropZone.classList.remove('drag-over');
     });
 
+    // Dropped File objects never carry a real filesystem path under
+    // pywebview (same browser-style sandboxing as a regular web page) -
+    // direct the user to click instead, which opens a native file dialog.
     dropZone.addEventListener('drop', (e) => {
         e.preventDefault();
         dropZone.classList.remove('drag-over');
-
-        const files = Array.from(e.dataTransfer.files).filter(f =>
-            f.name.match(/\.(png|jpg|jpeg)$/i)
-        );
-
-        if (files.length > 0) {
-            pendingImageUploadFiles = files;
-            showImageFileList(files);
-        }
+        showError('Drag-and-drop is not supported here - click to browse for files instead.');
     });
-}
-
-// Handle image file selection for simplified upload
-function handleImageFileSelect(e) {
-    const files = Array.from(e.target.files);
-    if (files.length > 0) {
-        pendingImageUploadFiles = files;
-        showImageFileList(files);
-    }
 }
 
 // Show selected image files in upload modal
@@ -4645,7 +4643,6 @@ function showImageFileList(files) {
         <div class="audio-file-item">
             <span class="audio-file-icon">🖼️</span>
             <span class="audio-file-name">${escapeHtml(f.name)}</span>
-            <span class="audio-file-size">${formatFileSize(f.size)}</span>
         </div>
     `).join('');
 
@@ -4691,11 +4688,9 @@ async function handleSimpleImageUpload(e) {
     try {
         showNotification('Uploading images...', 'info');
 
-        // Get file paths (Electron required)
-        const filePaths = getFilePaths(pendingImageUploadFiles);
-
-        // Add files by path (reference mode)
-        await addFileReferencesDirectly(filePaths, imageType, tags);
+        // Add files by path (reference mode) - pendingImageUploadFiles is
+        // already [{ name, path }] from pickFiles()
+        await addFileReferencesDirectly(pendingImageUploadFiles, imageType, tags);
 
         showNotification(`Upload complete: ${pendingImageUploadFiles.length} images added`);
 
@@ -4719,8 +4714,6 @@ function resetImageUploadModal() {
     const submitBtn = document.getElementById('uploadImageSubmitBtn');
     if (listEl) listEl.style.display = 'none';
     if (submitBtn) submitBtn.disabled = true;
-    const simpleFileInput = document.getElementById('imageFileInputSimple');
-    if (simpleFileInput) simpleFileInput.value = '';
 
     // Reset image type to default and rebuild tag fields
     const uploadImageType = document.getElementById('uploadImageType');
@@ -4732,12 +4725,6 @@ function resetImageUploadModal() {
 
 // Initialize simplified image upload listeners
 function initImageUploadListeners() {
-    // Simple image file input
-    const imageFileInputSimple = document.getElementById('imageFileInputSimple');
-    if (imageFileInputSimple) {
-        imageFileInputSimple.addEventListener('change', handleImageFileSelect);
-    }
-
     // Image upload form
     const imageUploadForm = document.getElementById('imageUploadForm');
     if (imageUploadForm) {
@@ -4916,11 +4903,6 @@ function initPdfListeners() {
         pdfUploadForm.addEventListener('submit', handlePdfUpload);
     }
 
-    const pdfFileInput = document.getElementById('pdfFileInput');
-    if (pdfFileInput) {
-        pdfFileInput.addEventListener('change', handlePdfFileSelect);
-    }
-
     setupPdfDropZone();
 }
 
@@ -5025,7 +5007,7 @@ function openPdfModal(pdf) {
     filePathLink.dataset.filepath = pdf.filepath;
 
     const showInFinderBtn = document.getElementById('pdfShowInFinderBtn');
-    if (isElectron && window.electronAPI && window.electronAPI.showItemInFolder) {
+    if (isDesktop && window.pywebview.api.show_item_in_folder) {
         showInFinderBtn.style.display = 'inline-block';
     } else {
         showInFinderBtn.style.display = 'none';
@@ -5138,13 +5120,13 @@ async function handlePdfShowInFinder(e) {
         return;
     }
 
-    if (!window.electronAPI || !window.electronAPI.showItemInFolder) {
+    if (!isDesktop || !window.pywebview.api.show_item_in_folder) {
         showError('This feature is only available in desktop mode');
         return;
     }
 
     try {
-        const result = await window.electronAPI.showItemInFolder(filepath);
+        const result = await window.pywebview.api.show_item_in_folder(filepath);
         if (result.success) {
             showSuccess('Opening file location...');
         } else {
@@ -5163,9 +5145,9 @@ async function handlePdfOpen(e) {
     const filepath = btn.dataset.filepath;
     const pdfId = btn.dataset.pdfId;
 
-    if (isElectron && window.electronAPI && window.electronAPI.openFile) {
+    if (isDesktop && window.pywebview.api.open_file) {
         try {
-            const result = await window.electronAPI.openFile(filepath);
+            const result = await window.pywebview.api.open_file(filepath);
             if (!result.success) {
                 showError(`Failed to open PDF: ${result.error}`);
             }
@@ -5182,8 +5164,18 @@ function setupPdfDropZone() {
     const dropZone = document.getElementById('pdfDropZone');
     if (!dropZone) return;
 
-    dropZone.addEventListener('click', () => {
-        document.getElementById('pdfFileInput').click();
+    dropZone.addEventListener('click', async () => {
+        let files;
+        try {
+            files = await pickFiles();
+        } catch (error) {
+            showError(error.message);
+            return;
+        }
+        if (files.length > 0) {
+            pendingPdfUploadFiles = files;
+            showPdfFileList(files);
+        }
     });
 
     dropZone.addEventListener('dragover', (e) => {
@@ -5195,28 +5187,14 @@ function setupPdfDropZone() {
         dropZone.classList.remove('drag-over');
     });
 
+    // Dropped File objects never carry a real filesystem path under
+    // pywebview (same browser-style sandboxing as a regular web page) -
+    // direct the user to click instead, which opens a native file dialog.
     dropZone.addEventListener('drop', (e) => {
         e.preventDefault();
         dropZone.classList.remove('drag-over');
-
-        const files = Array.from(e.dataTransfer.files).filter(f =>
-            f.name.match(/\.pdf$/i)
-        );
-
-        if (files.length > 0) {
-            pendingPdfUploadFiles = files;
-            showPdfFileList(files);
-        }
+        showError('Drag-and-drop is not supported here - click to browse for files instead.');
     });
-}
-
-// Handle PDF file selection
-function handlePdfFileSelect(e) {
-    const files = Array.from(e.target.files);
-    if (files.length > 0) {
-        pendingPdfUploadFiles = files;
-        showPdfFileList(files);
-    }
 }
 
 // Show selected PDF files
@@ -5228,7 +5206,6 @@ function showPdfFileList(files) {
         <div class="audio-file-item">
             <span class="audio-file-icon">📄</span>
             <span class="audio-file-name">${escapeHtml(f.name)}</span>
-            <span class="audio-file-size">${formatFileSize(f.size)}</span>
         </div>
     `).join('');
 
@@ -5236,7 +5213,7 @@ function showPdfFileList(files) {
     submitBtn.disabled = false;
 }
 
-// Handle PDF upload (Electron reference-mode add, same pattern as image upload)
+// Handle PDF upload (desktop reference-mode add, same pattern as image upload)
 async function handlePdfUpload(e) {
     e.preventDefault();
 
@@ -5265,8 +5242,8 @@ async function handlePdfUpload(e) {
     try {
         showNotification('Adding PDF references...', 'info');
 
-        const filePaths = getFilePaths(pendingPdfUploadFiles);
-        await addPdfReferencesDirectly(filePaths, imageType, tags);
+        // pendingPdfUploadFiles is already [{ name, path }] from pickFiles()
+        await addPdfReferencesDirectly(pendingPdfUploadFiles, imageType, tags);
 
         closeModals();
         resetPdfUploadModal();
@@ -5285,7 +5262,7 @@ async function handlePdfUpload(e) {
 async function addPdfReferencesDirectly(filePaths, imageType, tags = {}) {
     const results = { added: 0, errors: 0, error_files: [] };
 
-    for (const { file, path } of filePaths) {
+    for (const { name, path } of filePaths) {
         try {
             const response = await fetch('/api/pdfs/add-reference', {
                 method: 'POST',
@@ -5303,12 +5280,12 @@ async function addPdfReferencesDirectly(filePaths, imageType, tags = {}) {
                 results.added++;
             } else {
                 results.errors++;
-                results.error_files.push(file.name);
+                results.error_files.push(name);
             }
         } catch (error) {
             results.errors++;
-            results.error_files.push(file.name);
-            console.error(`Error adding reference for ${file.name}:`, error);
+            results.error_files.push(name);
+            console.error(`Error adding reference for ${name}:`, error);
         }
     }
 
@@ -5327,8 +5304,6 @@ function resetPdfUploadModal() {
     const submitBtn = document.getElementById('uploadPdfSubmitBtn');
     if (listEl) listEl.style.display = 'none';
     if (submitBtn) submitBtn.disabled = true;
-    const pdfFileInput = document.getElementById('pdfFileInput');
-    if (pdfFileInput) pdfFileInput.value = '';
     document.getElementById('uploadPdfSource').value = '';
     document.getElementById('uploadPdfCampaign').value = '';
 }
