@@ -1,16 +1,55 @@
 [project]
 name = "imagetagger"
 version = "2.1.0"
-description = ""
-authors = [
-    {name = "Todd Gerdy",email = "toadimous@gmail.com"}
-]
+description = "Image Vault - a desktop/web app for managing tabletop RPG character images"
 readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.10"
+authors = [
+    { name = "Todd Gerdy", email = "toadimous@gmail.com" },
+]
 dependencies = [
+    "Flask==3.0.0",
+    "flask-cors==4.0.0",
+    "Pillow==10.1.0",
+    "watchdog==3.0.0",
+    "tinytag>=1.9.0",
+    "pymupdf>=1.24.0",
+    "platformdirs>=4.0.0",
+    "pywebview>=5.0",
 ]
 
+# Windowed desktop entry point (no console window). Launches the pywebview
+# shell from desktop.py, which starts Flask in a background thread.
+[project.gui-scripts]
+image-vault = "desktop:main"
 
 [build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# Flat module layout (no package directory): ship the runtime modules plus the
+# bundled assets, preserving their relative paths so templates/ and static/ sit
+# next to the modules — matching app.py's non-frozen get_app_dir() resolution.
+[tool.hatch.build.targets.wheel]
+include = [
+    "app.py",
+    "cache.py",
+    "database.py",
+    "desktop.py",
+    "file_utils.py",
+    "metadata.py",
+    "scanner.py",
+    "templates/",
+    "static/",
+]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "*.py",
+    "templates/",
+    "static/",
+    "README.md",
+    "LICENSE",
+    "image-vault.spec",
+]
