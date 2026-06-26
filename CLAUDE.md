@@ -27,8 +27,11 @@ python3 app.py --port 5000
 # Development mode with debug
 FLASK_ENV=development python3 app.py
 
-# Start Electron (desktop mode)
-npm start
+# Start the desktop app (pywebview window wrapping the Flask backend)
+python3 desktop.py
+
+# Desktop app with DevTools
+DEBUG_DEVTOOLS=1 python3 desktop.py
 ```
 
 ### Testing
@@ -51,14 +54,11 @@ pytest --cov --cov-report=html
 
 ### Build & Package
 ```bash
-# Install Node dependencies
-npm install
+# Build a wheel (uv is the maintainer's dev/build tool; end users never run it)
+uv build
 
-# Build Electron app
-npm run build
-
-# Package for distribution
-npm run dist
+# Freeze the desktop app into a standalone artifact (dist/Image Vault.app on macOS)
+pyinstaller image-vault.spec
 ```
 
 ### Database Operations
@@ -84,17 +84,14 @@ ImageTagger/
 ├── scanner.py             # Folder scanning & file watching
 ├── cache.py               # Thumbnail caching layer
 ├── file_utils.py          # File operation utilities
-├── drive_client.py        # Google Drive API wrapper
-├── drive_sync.py          # Google Drive synchronization
-├── config.json            # Application configuration
+├── desktop.py             # pywebview desktop entry point (Flask + native window)
+├── image-vault.spec       # PyInstaller spec for the standalone app
+├── config.json            # Application configuration (in user data dir at runtime)
 ├── templates/
 │   └── index.html         # Single-page application UI
 ├── static/
 │   ├── js/app.js          # Frontend logic & state management
 │   └── css/style.css      # Dark fantasy theme styling
-├── electron/
-│   ├── main.js            # Electron process launcher
-│   └── preload.js         # Secure Electron bridge
 └── tests/
     ├── test_*.py          # Unit tests
     └── chrome/            # E2E tests (Page Object Model)
@@ -102,17 +99,14 @@ ImageTagger/
 
 ### Key Architectural Decisions
 
-#### 1. Dual-Mode Architecture
-**Reference Mode (Electron)**:
-- Files stay in original locations
-- Database maintains file paths
-- No copying or duplication
-- Recommended for large collections
+#### 1. Reference Mode (only mode)
+Files stay in their original on-disk locations; the app indexes them in
+place and stores absolute paths in the database. Nothing is copied or moved.
+Adding files needs real absolute filesystem paths, which the pywebview
+native file dialog (`window.pywebview.api.open_file_dialog()`) provides.
 
-**Copy Mode (Browser)**:
-- Files copied to `./tokens/` folder
-- Centralized vault approach
-- Traditional file management
+The legacy Copy Mode (copying files into `./tokens/`) and the browser-based
+upload flow have been removed — the `/api/*/upload` endpoints now return 400.
 
 #### 2. Metadata Storage Strategy
 - **PNG Files = Source of Truth**: Metadata stored in PNG text chunks (`ImageVault:` prefix)
@@ -139,12 +133,18 @@ Six configurable image types with type-specific tag schemas:
 - **SQLite3** - Fast indexing (built-in)
 - **Pillow 10.1.0** - Image processing & PNG metadata
 - **Watchdog 3.0.0** - Folder monitoring
-- **Google APIs** - OAuth2 and Drive integration
+- **PyMuPDF** - PDF cover-thumbnail rendering
+- **tinytag** - Audio metadata/duration
+- **platformdirs** - Cross-platform user data dir for config.json/tokens.db
 
 ### Frontend
 - **Vanilla JavaScript** (ES6+) - No frameworks
 - **HTML5/CSS3** - Responsive design
-- **Electron 32.0.0** - Desktop wrapper
+- **pywebview 5+** - Native desktop window wrapping the Flask backend (replaced Electron)
+
+### Packaging
+- **uv** - Maintainer's build tool (`uv build` → wheel)
+- **PyInstaller** - Freezes the desktop app into a standalone artifact (`image-vault.spec`)
 
 ### Testing
 - **Pytest 7.4.3** - Test framework
@@ -270,12 +270,9 @@ ALLOWED_EXTENSIONS = {'.png', '.jpg', '.jpeg'}
 
 ### File Path Handling
 ```python
-# Use absolute paths in Reference Mode
-# Use relative paths in Copy Mode
-if is_reference_mode:
-    token_data['filepath'] = os.path.abspath(filepath)
-else:
-    token_data['filepath'] = os.path.relpath(filepath, tokens_folder)
+# Reference Mode (the only mode): store absolute paths so files are found
+# wherever they already live on disk.
+token_data['filepath'] = os.path.abspath(filepath)
 ```
 
 ### Tag Management
@@ -331,14 +328,15 @@ if not os.path.exists(filepath):
     return None
 ```
 
-### ❌ Forgetting Electron Context
+### ❌ Forgetting the pywebview Bridge
 ```javascript
-// DON'T: Use browser-only APIs without checking
-const path = file.path;  // Undefined in browser!
+// DON'T: Assume a <input type=file> File object carries a real path
+const path = file.path;  // Always undefined in a browser/webview sandbox
 
-// DO: Check for Electron environment
-if (window.electronAPI) {
-    const path = window.electronAPI.getFileAbsolutePath(file);
+// DO: Feature-detect pywebview and use its native dialog, which returns
+//     real absolute paths straight from Python
+if (window.pywebview) {
+    const paths = await window.pywebview.api.open_file_dialog();
 }
 ```
 
@@ -350,7 +348,6 @@ if (window.electronAPI) {
 - Test database operations (CRUD, filtering, sorting)
 - Test metadata read/write
 - Test file utilities
-- Mock external dependencies (Google Drive)
 - Use temporary files/databases
 
 ```python
@@ -402,19 +399,18 @@ def test_upload_single_png(chrome_driver, base_url, sample_png_path, test_db):
 
 ## Integration Points
 
-### Google Drive Sync
-- Optional feature (requires OAuth setup)
-- Uses `credentials.json` for OAuth flow
-- Stores tokens in local storage (browser) or file (Electron)
-- Monitors specific Drive folders
-- Bidirectional sync with conflict resolution
+### Desktop Shell (pywebview)
+- `desktop.py` starts Flask in a daemon thread, polls `/api/version`, then
+  opens a native `pywebview` window at the local URL
+- `window.pywebview.api.*` is the JS↔Python bridge (replaced `window.electronAPI`):
+  - `open_file_dialog()` - native file picker returning real absolute paths
+  - `show_item_in_folder(filepath)` - reveal in Finder/Explorer/file manager
+  - `open_file(filepath)` - open in the OS default application
+- Frontend feature-detects `window.pywebview` (replaced `isElectron`)
+- No subprocess/SIGTERM lifecycle: Flask dies with the process on window close
 
-### Electron Integration
-- `preload.js` provides secure bridge to Node.js
-- `window.electronAPI.isElectron` - Detect environment
-- `window.electronAPI.getFileAbsolutePath(file)` - Get file path
-- Flask server launched as subprocess in Electron
-- OAuth tokens passed via environment variables
+> Note: Google Drive sync was removed (#24). There is no OAuth/`credentials.json`
+> flow anymore; all state is local.
 
 ### Thumbnail Caching
 - `/api/thumbnail/<id>` - Serve cached thumbnails
@@ -449,7 +445,7 @@ def test_upload_single_png(chrome_driver, base_url, sample_png_path, test_db):
 - `GET /api/pdfs/<id>` - Single PDF details
 - `PUT /api/pdfs/<id>` - Update metadata (Name, ImageType, Source, Campaign, Notes)
 - `DELETE /api/pdfs/<id>` - Delete PDF
-- `POST /api/pdfs/add-reference` - Add a PDF by path (Electron Reference Mode)
+- `POST /api/pdfs/add-reference` - Add a PDF by path (desktop Reference Mode)
 - `GET /api/pdf/<id>` - Serve the raw PDF (browser fallback for opening)
 - `GET /api/pdf-thumbnail/<id>` - Cover thumbnail rendered from page 1 (150x150)
 - `GET /api/pdfs/tags/<tag_type>` - Get unique tag values (source, campaign)
@@ -465,11 +461,11 @@ def test_upload_single_png(chrome_driver, base_url, sample_png_path, test_db):
 3. Run Flask: `python3 app.py --port 5000`
 4. Access at `http://localhost:5000`
 
-### Electron Packaging
-1. Install Node dependencies: `npm install`
-2. Build: `npm run build`
-3. Package: `npm run dist`
-4. Distributable in `dist/` folder
+### Desktop Packaging
+1. Install dependencies: `pip install -r requirements.txt`
+2. (Optional) Build a wheel: `uv build`
+3. Freeze the app: `pyinstaller image-vault.spec`
+4. Standalone artifact in `dist/` (`Image Vault.app` on macOS), no Python needed to run it
 
 ### Configuration (config.json)
 ```json
@@ -516,15 +512,10 @@ def test_upload_single_png(chrome_driver, base_url, sample_png_path, test_db):
 - Hash calculated on upload
 - Filename collision handled separately
 
-### Electron Path Handling
-- Relative paths don't work in Electron file dialogs
-- Always use absolute paths in Reference Mode
-- Convert paths appropriately for display
-
-### Google Drive Sync
-- Requires user OAuth consent
-- Rate limits apply (use exponential backoff)
-- Large images may timeout (compress before upload)
+### Path Handling
+- A browser/webview `File` object never carries a real filesystem path
+- Use `window.pywebview.api.open_file_dialog()` to get real absolute paths
+- Always use absolute paths in Reference Mode; convert appropriately for display
 
 ---
 
@@ -545,7 +536,7 @@ def test_upload_single_png(chrome_driver, base_url, sample_png_path, test_db):
 - [ ] Add loading skeletons instead of spinners
 - [ ] Implement proper logging configuration
 - [ ] Add API rate limiting
-- [ ] Improve Google Drive sync reliability
+- [ ] Code-sign/notarize the macOS artifact and set up a release pipeline (#30)
 
 ---
 
@@ -553,7 +544,8 @@ def test_upload_single_png(chrome_driver, base_url, sample_png_path, test_db):
 
 ### Documentation
 - Flask: https://flask.palletsprojects.com/
-- Electron: https://www.electronjs.org/
+- pywebview: https://pywebview.flowrl.com/
+- PyInstaller: https://pyinstaller.org/
 - Pillow: https://pillow.readthedocs.io/
 - Selenium: https://www.selenium.dev/documentation/
 
@@ -563,6 +555,6 @@ def test_upload_single_png(chrome_driver, base_url, sample_png_path, test_db):
 
 ---
 
-**Last Updated**: 2026-01-08
-**Version**: 1.0
+**Last Updated**: 2026-06-25
+**Version**: 1.1
 **Project Lead**: Todd Gerdy

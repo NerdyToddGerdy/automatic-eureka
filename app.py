@@ -560,11 +560,11 @@ def update_token_path(token_id):
 def upload_tokens():
     """
     Legacy upload endpoint - browser mode is no longer supported.
-    Use /api/tokens/add-reference instead (Electron desktop app required).
+    Use /api/tokens/add-reference instead (desktop app required).
     """
     return jsonify({
         'success': False,
-        'error': 'Browser upload mode is no longer supported. Please use the Electron desktop app with reference mode. Use /api/tokens/add-reference to add files by path.'
+        'error': 'Browser upload mode is no longer supported. Please use the desktop app with reference mode. Use /api/tokens/add-reference to add files by path.'
     }), 400
 
 
@@ -1647,11 +1647,11 @@ def delete_audio_file(audio_id):
 def upload_audio_files():
     """
     Legacy upload endpoint - browser mode is no longer supported.
-    Use /api/audio/add-reference instead (Electron desktop app required).
+    Use /api/audio/add-reference instead (desktop app required).
     """
     return jsonify({
         'success': False,
-        'error': 'Browser upload mode is no longer supported. Please use the Electron desktop app with reference mode. Use /api/audio/add-reference to add files by path.'
+        'error': 'Browser upload mode is no longer supported. Please use the desktop app with reference mode. Use /api/audio/add-reference to add files by path.'
     }), 400
 
 
