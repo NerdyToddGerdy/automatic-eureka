@@ -23,26 +23,21 @@ A desktop application for managing your collection of RPG assets: character toke
 
 ## Installation
 
-**Prerequisites**: Python 3.10+, Node.js 18+
+**Prerequisites**: Python 3.10+ (a single runtime — no Node.js needed)
 
-1. Install Python dependencies:
+1. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-2. Install Node.js dependencies:
+2. Run the desktop app:
 ```bash
-npm install
+python3 desktop.py
 ```
 
-3. Run the desktop app:
-```bash
-npm start
-```
+A native desktop window opens with Flask running in the background (in the same process — no subprocess to manage). You'll see a green "📌 Reference Mode" indicator confirming files are referenced in place, not copied.
 
-The Electron app will launch with Flask running in the background. You'll see a green "📌 Reference Mode" indicator confirming files are referenced in place, not copied.
-
-> **Why Electron, not just a browser?** Image Vault only supports Reference Mode now — there's no "copy files into a vault folder" mode anymore. Adding files by path requires the absolute file-system paths that only Electron's bridge can provide; a plain browser can't do this, and the legacy browser-upload API routes are intentionally disabled. Running `python3 app.py` directly (without Electron) still works for development and for browsing/editing whatever is already indexed, but you can't add new files through the UI that way.
+> **Why a desktop window, not just a browser?** Image Vault only supports Reference Mode — there's no "copy files into a vault folder" mode. Adding files by path requires real absolute file-system paths, which the desktop app's native file dialog (via [pywebview](https://pywebview.flowrl.com/)) provides; a plain browser can't, and the legacy browser-upload API routes are intentionally disabled. Running `python3 app.py` directly (without the desktop window) still works for development and for browsing/editing whatever is already indexed, but you can't add new files through the UI that way.
 
 ## Usage
 
@@ -116,20 +111,13 @@ python3 app.py --host 0.0.0.0
 
 ## Packaging Desktop App
 
-To create distributable installers for the desktop app:
+The app is frozen into a standalone artifact with [PyInstaller](https://pyinstaller.org/) (no Python needed on the target machine):
 
 ```bash
-# macOS - Creates .dmg installer
-npm run package-mac
-
-# Windows - Creates .exe installer
-npm run package-win
-
-# Linux - Creates AppImage
-npm run package-linux
+pyinstaller image-vault.spec
 ```
 
-The packaged apps will be in the `dist/` folder. These are standalone applications that include Python, Flask, and all dependencies.
+The packaged app lands in the `dist/` folder (`Image Vault.app` on macOS; Windows/Linux are stretch goals). Optionally, `uv build` produces a wheel first — `uv` is the maintainer's build tool and isn't something end users run.
 
 ## Project Structure
 
@@ -141,12 +129,10 @@ image-vault/
 ├── scanner.py             # Folder scanning, file-type detection, and watching
 ├── cache.py                # In-memory thumbnail cache
 ├── file_utils.py          # File hashing, timeout-bounded file I/O, duplicate detection
-├── config.json             # Configuration
+├── desktop.py             # pywebview desktop entry point (Flask + native window + JS bridge)
+├── image-vault.spec       # PyInstaller spec for the standalone app
 ├── requirements.txt        # Python dependencies
-├── package.json            # Node/Electron config
-├── electron/
-│   ├── main.js             # Electron main process
-│   └── preload.js          # Secure bridge script (file dialogs, "show in folder", etc.)
+├── pyproject.toml          # Package metadata & build config (PEP 621 + hatchling)
 ├── static/
 │   ├── css/style.css       # Dark fantasy theme
 │   ├── js/app.js           # Frontend logic (single-page app, no framework)
