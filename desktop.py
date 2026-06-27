@@ -8,6 +8,7 @@ Flask runs in a daemon thread that simply dies with the process when the
 window closes.
 """
 import argparse
+import json
 import os
 import platform
 import subprocess
@@ -19,6 +20,52 @@ import urllib.request
 import webview
 
 import app as backend
+
+
+# Maps each upload drop zone (by CSS selector) to the logical zone name that the
+# frontend's window.handleDroppedPaths() dispatches on.
+_DROP_ZONES = {
+    '#imageDropZone': 'image',
+    '#audioDropZone': 'audio',
+    '#pdfDropZone': 'pdf',
+    '#folderDropZone': 'folder',
+}
+
+
+def _make_drop_handler(window, zone):
+    """Build a Python drop handler that forwards resolved file paths to the page.
+
+    pywebview only exposes a dropped file's real filesystem path
+    (``pywebviewFullPath``) to a Python-side drop listener — the page's own JS
+    ``drop`` event sees a sandboxed File with no path (same as a browser). So we
+    pull the paths here and hand them back to the normal add-by-path flow.
+    """
+    def _handler(event):
+        try:
+            data_transfer = (event or {}).get('dataTransfer') or {}
+            files = data_transfer.get('files') or []
+            paths = [f.get('pywebviewFullPath') for f in files]
+            paths = [p for p in paths if p]
+            if not paths:
+                return
+            window.evaluate_js(
+                'window.handleDroppedPaths && window.handleDroppedPaths('
+                f'{json.dumps(zone)}, {json.dumps(paths)})'
+            )
+        except Exception as exc:
+            print(f'Drop handler error for {zone}: {exc}', file=sys.stderr)
+
+    return _handler
+
+
+def register_drop_zones(window):
+    """Register a native file-drop handler on each upload zone, once per window."""
+    from webview.dom import DOMEventHandler
+
+    for selector, zone in _DROP_ZONES.items():
+        element = window.dom.get_element(selector)
+        if element is not None:
+            element.on('drop', DOMEventHandler(_make_drop_handler(window, zone), prevent_default=True))
 
 
 def wait_for_flask(host: str, port: int, max_attempts: int = 30, interval_s: float = 0.2) -> bool:
@@ -106,6 +153,18 @@ def main():
         js_api=api,
     )
     api.window = window
+
+    # Wire native drag-and-drop once the DOM (and pywebview bridge) is ready.
+    # loaded can fire again on in-app reloads, so register only the first time.
+    _drops_registered = {'done': False}
+
+    def _on_loaded(*_):
+        if _drops_registered['done']:
+            return
+        _drops_registered['done'] = True
+        register_drop_zones(window)
+
+    window.events.loaded += _on_loaded
 
     debug = bool(os.environ.get('DEBUG_DEVTOOLS') or os.environ.get('NODE_ENV') == 'development')
     webview.start(debug=debug)

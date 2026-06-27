@@ -52,8 +52,17 @@ let wizardState = {
 /**
  * Detect if running in the pywebview desktop app (vs a plain browser tab).
  * Note: This app is desktop-only. Browser mode has been removed.
+ *
+ * Evaluated lazily (as a function, not a cached const) because pywebview
+ * injects `window.pywebview` / `window.pywebview.api` asynchronously *after*
+ * the page loads and fires `pywebviewready` - unlike Electron's preload,
+ * which exposed its bridge before page scripts ran. A const captured at
+ * parse time would be frozen `false` and every desktop feature would think
+ * it was running in a plain browser.
  */
-const isDesktop = typeof window.pywebview !== 'undefined' && !!window.pywebview.api;
+function isDesktop() {
+  return typeof window.pywebview !== 'undefined' && !!window.pywebview.api;
+}
 
 /**
  * Legacy helper kept only so the (currently unreachable) fileInput-based
@@ -72,7 +81,7 @@ function getFilePaths(files) {
  * file. Replaces the <input type=file> + getFileAbsolutePath() pattern.
  */
 async function pickFiles() {
-  if (!isDesktop) {
+  if (!isDesktop()) {
     throw new Error('This app requires the desktop application. Browser mode is not supported.');
   }
   const paths = await window.pywebview.api.open_file_dialog();
@@ -816,6 +825,7 @@ function setupEventListeners() {
     document.getElementById('fileInput').addEventListener('change', handleFileUpload);
 
     // Setup drag and drop
+    setupGlobalDropGuard();
     setupDragDrop();
     setupFolderDragDrop();
 
@@ -1293,7 +1303,7 @@ async function openTokenModal(token) {
 
             // Show "Show in Finder" button only in the desktop app
             const showInFinderBtn = document.getElementById('showInFinderBtn');
-            if (isDesktop && window.pywebview.api.show_item_in_folder) {
+            if (isDesktop() && window.pywebview.api.show_item_in_folder) {
                 showInFinderBtn.style.display = 'inline-block';
             } else {
                 showInFinderBtn.style.display = 'none';
@@ -1434,7 +1444,7 @@ async function handleShowInFinder(e) {
         return;
     }
 
-    if (!isDesktop || !window.pywebview.api.show_item_in_folder) {
+    if (!isDesktop() || !window.pywebview.api.show_item_in_folder) {
         showError('This feature is only available in desktop mode');
         return;
     }
@@ -2195,6 +2205,27 @@ function formatDate(dateString) {
 
 // Duplicate Detection Functions
 
+// A bare name collision (same filename, different file on disk) is NOT a real
+// duplicate in Reference Mode — filenames are tracked per-path and need not be
+// unique. Only a content (hash) match is a true duplicate. So a row that
+// collides by name alone should default to "Keep both", not "Skip".
+function isNameCollisionOnly(item) {
+    return !item.content_duplicate && !!item.name_collision;
+}
+
+// Drop name-collision flags that point at an existing item of a *different*
+// image type: a Portrait named like an existing Token is not a conflict. Run
+// once the target image type is known. Mutates the items in place. Content
+// (hash) duplicates are type-independent and are left untouched.
+function suppressCrossTypeNameCollisions(items, imageType) {
+    for (const item of items) {
+        const nc = item.name_collision;
+        if (nc && nc.image_type && nc.image_type !== imageType) {
+            item.name_collision = null;
+        }
+    }
+}
+
 // Show duplicate confirmation modal and return user choices
 async function showDuplicateConfirmation(duplicates, files) {
     return new Promise((resolve) => {
@@ -2246,8 +2277,13 @@ async function showDuplicateConfirmation(duplicates, files) {
                     </div>
                 </div>
                 <div class="duplicate-actions">
+                    ${isNameCollisionOnly(dup) ? `
                     <label class="duplicate-action-radio selected" data-index="${index}">
-                        <input type="radio" name="action_${index}" value="skip" checked />
+                        <input type="radio" name="action_${index}" value="add" checked />
+                        <span class="duplicate-action-label">Keep both</span>
+                    </label>` : ''}
+                    <label class="duplicate-action-radio ${isNameCollisionOnly(dup) ? '' : 'selected'}" data-index="${index}">
+                        <input type="radio" name="action_${index}" value="skip" ${isNameCollisionOnly(dup) ? '' : 'checked'} />
                         <span class="duplicate-action-label">Skip</span>
                     </label>
                     <label class="duplicate-action-radio" data-index="${index}">
@@ -2278,7 +2314,9 @@ async function showDuplicateConfirmation(duplicates, files) {
             `;
 
             duplicateList.appendChild(itemDiv);
-            userChoices[dup.filename] = 'skip'; // Default action
+            // Name-only collisions default to "Keep both"; true content
+            // duplicates default to "Skip".
+            userChoices[dup.filename] = isNameCollisionOnly(dup) ? 'add' : 'skip';
         });
 
         // Setup radio button handlers
@@ -2511,6 +2549,73 @@ async function addFileReferencesWithChoices(filePaths, userChoices, imageType, t
     }
 }
 
+// Prevent the webview from navigating away when a file or folder is dropped
+// anywhere outside a designated drop zone. Without this, WKWebView's (and a
+// plain browser's) default action is to load the dropped file as the page,
+// which destroys the single-page app and leaves the UI frozen — nothing is
+// clickable because the app's DOM/handlers are gone. The designated drop zones
+// call stopPropagation(), so this document-level guard never fires for them; it
+// only neutralizes "missed" drops that land on empty page/modal chrome.
+function setupGlobalDropGuard() {
+    ['dragover', 'drop'].forEach(eventName => {
+        document.addEventListener(eventName, (e) => {
+            e.preventDefault();
+        }, false);
+    });
+}
+
+// ========== NATIVE (pywebview) FILE DROP BRIDGE ==========
+// A dropped File never carries a real filesystem path under pywebview (it's
+// sandboxed like a browser), so desktop.py registers Python-side drop handlers
+// that resolve each dropped file's real path and call window.handleDroppedPaths
+// with the zone name. We then route those paths into the same add-by-path flow
+// the native file dialog (pickFiles) uses.
+function pathBasename(p) {
+    return p.split(/[\\/]/).pop();
+}
+
+const DROP_EXTENSIONS = {
+    image: /\.(png|jpe?g)$/i,
+    audio: /\.(mp3|wav|ogg|m4a|flac)$/i,
+    pdf: /\.pdf$/i,
+};
+
+window.handleDroppedPaths = function (zone, paths) {
+    if (!Array.isArray(paths) || paths.length === 0) return;
+
+    if (zone === 'folder') {
+        // A dropped folder pre-fills the import path field, ready to scan.
+        const input = document.getElementById('folderPathInput');
+        if (input) {
+            input.value = paths[0];
+            input.focus();
+            showNotification('Folder path filled in — set options and import.', 'info');
+        }
+        return;
+    }
+
+    const matcher = DROP_EXTENSIONS[zone];
+    const files = paths
+        .filter(p => !matcher || matcher.test(p))
+        .map(p => ({ name: pathBasename(p), path: p }));
+
+    if (files.length === 0) {
+        showError('No supported files in that drop for this panel.');
+        return;
+    }
+
+    if (zone === 'image') {
+        pendingImageUploadFiles = files;
+        showImageFileList(files);
+    } else if (zone === 'audio') {
+        pendingAudioUploadFiles = files;
+        showAudioFileList(files);
+    } else if (zone === 'pdf') {
+        pendingPdfUploadFiles = files;
+        showPdfFileList(files);
+    }
+};
+
 // Drag and Drop Setup
 function setupDragDrop() {
     const dropZone = document.getElementById('dragDropZone');
@@ -2727,6 +2832,9 @@ async function handleLegacyFolderImport(results) {
 
     const tags = await showBatchTagModal(imageType, results.length);
     showLoading();
+
+    // A file named like an existing item of a different type isn't a conflict.
+    suppressCrossTypeNameCollisions(results, imageType);
 
     const filesWithDuplicates = results.filter(r => r.content_duplicate || r.name_collision);
 
@@ -3439,6 +3547,10 @@ async function showWizardReview() {
                 .map(([key, value]) => `<span class="tag">${key}: ${value}</span>`)
                 .join('');
 
+            // A file named like an existing item of a different type isn't a
+            // conflict — drop those flags before counting duplicates.
+            suppressCrossTypeNameCollisions(assignment.files, assignment.imageType);
+
             // Check for duplicates in this subfolder
             const duplicatesInSubfolder = assignment.files.filter(f =>
                 f.content_duplicate || f.name_collision
@@ -3548,8 +3660,13 @@ function renderWizardDuplicates(container, duplicates) {
                 </div>
             </div>
             <div class="duplicate-actions">
+                ${isNameCollisionOnly(dup) ? `
                 <label class="duplicate-action-radio selected" data-index="${index}">
-                    <input type="radio" name="wizard_dup_${index}" value="skip" checked />
+                    <input type="radio" name="wizard_dup_${index}" value="add" checked />
+                    <span>Keep both</span>
+                </label>` : ''}
+                <label class="duplicate-action-radio ${isNameCollisionOnly(dup) ? '' : 'selected'}" data-index="${index}">
+                    <input type="radio" name="wizard_dup_${index}" value="skip" ${isNameCollisionOnly(dup) ? '' : 'checked'} />
                     <span>Skip</span>
                 </label>
                 <label class="duplicate-action-radio" data-index="${index}">
@@ -3639,8 +3756,8 @@ function renderWizardDuplicates(container, duplicates) {
             });
         }
 
-        // Set default action
-        dup.action = 'skip';
+        // Set default action: name-only collisions keep both, content dupes skip.
+        dup.action = isNameCollisionOnly(dup) ? 'add' : 'skip';
     });
 }
 
@@ -3773,12 +3890,13 @@ function setupFolderDragDrop() {
         }, false);
     });
 
-    // Handle drop
+    // Handle drop. The real folder path is delivered by desktop.py's native
+    // drop handler via window.handleDroppedPaths('folder', ...); here we only
+    // clear the hover state. (If the path can't be resolved, the user can still
+    // type or paste it into the input directly.)
     dropZone.addEventListener('drop', (e) => {
-        // Due to browser security restrictions, we cannot get the actual filesystem path
-        // from a dropped folder. Instead, show a helpful message to the user.
-        alert('Please paste the folder path in the input field below.\n\nOn Mac: Right-click the folder in Finder, hold Option, then select "Copy as Pathname".');
-        folderPathInput.focus();
+        e.preventDefault();
+        dropZone.classList.remove('drag-over');
     }, false);
 
     // Also make the drop zone clickable as a hint
@@ -4234,7 +4352,7 @@ function openAudioModal(audio) {
         filePathLink.dataset.filepath = audio.filepath;
 
         // Show "Show in Finder" button only in the desktop app
-        if (isDesktop && window.pywebview.api.show_item_in_folder) {
+        if (isDesktop() && window.pywebview.api.show_item_in_folder) {
             showInFinderBtn.style.display = 'inline-block';
         } else {
             showInFinderBtn.style.display = 'none';
@@ -4326,7 +4444,7 @@ async function handleAudioShowInFinder(e) {
         return;
     }
 
-    if (!isDesktop || !window.pywebview.api.show_item_in_folder) {
+    if (!isDesktop() || !window.pywebview.api.show_item_in_folder) {
         showError('This feature is only available in desktop mode');
         return;
     }
@@ -4471,8 +4589,18 @@ function setupAudioDropZone() {
     const dropZone = document.getElementById('audioDropZone');
     if (!dropZone) return;
 
-    dropZone.addEventListener('click', () => {
-        document.getElementById('audioFileInput').click();
+    dropZone.addEventListener('click', async () => {
+        let files;
+        try {
+            files = await pickFiles();
+        } catch (error) {
+            showError(error.message);
+            return;
+        }
+        if (files.length > 0) {
+            pendingAudioUploadFiles = files;
+            showAudioFileList(files);
+        }
     });
 
     dropZone.addEventListener('dragover', (e) => {
@@ -4484,18 +4612,11 @@ function setupAudioDropZone() {
         dropZone.classList.remove('drag-over');
     });
 
+    // Real paths arrive via desktop.py -> window.handleDroppedPaths('audio', …);
+    // here we only clear the hover state.
     dropZone.addEventListener('drop', (e) => {
         e.preventDefault();
         dropZone.classList.remove('drag-over');
-
-        const files = Array.from(e.dataTransfer.files).filter(f =>
-            f.name.match(/\.(mp3|wav|ogg|m4a|flac)$/i)
-        );
-
-        if (files.length > 0) {
-            pendingAudioUploadFiles = files;
-            showAudioFileList(files);
-        }
     });
 }
 
@@ -4517,7 +4638,7 @@ function showAudioFileList(files) {
         <div class="audio-file-item">
             <span class="audio-file-icon">🎵</span>
             <span class="audio-file-name">${escapeHtml(f.name)}</span>
-            <span class="audio-file-size">${formatFileSize(f.size)}</span>
+            ${f.size !== undefined ? `<span class="audio-file-size">${formatFileSize(f.size)}</span>` : ''}
         </div>
     `).join('');
 
@@ -4546,42 +4667,52 @@ async function handleAudioUpload(e) {
 
     const audioType = document.getElementById('uploadAudioType').value;
 
-    const formData = new FormData();
-    formData.append('audio_type', audioType);
-
-    pendingAudioUploadFiles.forEach(file => {
-        formData.append('files', file);
-    });
-
     try {
-        showNotification('Uploading audio files...', 'info');
+        showNotification('Adding audio references...', 'info');
 
-        const response = await fetch('/api/audio/upload', {
-            method: 'POST',
-            body: formData
-        });
+        // pendingAudioUploadFiles is [{ name, path }] from pickFiles() or a
+        // native drop, so add each by path (Reference Mode).
+        const results = await addAudioReferencesDirectly(pendingAudioUploadFiles, audioType);
+        showNotification(`Upload complete: ${results.added} added, ${results.errors} errors`);
 
-        const data = await response.json();
+        closeModals();
+        pendingAudioUploadFiles = null;
+        document.getElementById('audioFileList').style.display = 'none';
+        document.getElementById('uploadAudioSubmitBtn').disabled = true;
 
-        if (data.success) {
-            const results = data.results;
-            showNotification(`Upload complete: ${results.added} added, ${results.errors} errors`);
-
-            closeModals();
-            pendingAudioUploadFiles = null;
-            document.getElementById('audioFileList').style.display = 'none';
-            document.getElementById('uploadAudioSubmitBtn').disabled = true;
-
-            loadAudioFiles();
-        } else {
-            showError(data.error || 'Upload failed');
-        }
+        loadAudioFiles();
     } catch (error) {
         showError('Error uploading audio: ' + error.message);
     } finally {
         audioUploadInProgress = false;
         submitBtn.textContent = 'Upload';
     }
+}
+
+// Add audio file references by path (Reference Mode)
+async function addAudioReferencesDirectly(filePaths, audioType) {
+    const results = { added: 0, errors: 0 };
+
+    for (const { path } of filePaths) {
+        try {
+            const response = await fetch('/api/audio/add-reference', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filepath: path, audio_type: audioType })
+            });
+            const data = await response.json();
+            if (data.success) {
+                results.added++;
+            } else {
+                results.errors++;
+            }
+        } catch (error) {
+            results.errors++;
+            console.error(`Error adding audio reference for ${path}:`, error);
+        }
+    }
+
+    return results;
 }
 
 // Handle upload audio type change (for dynamic tags in upload modal)
@@ -4624,13 +4755,11 @@ function setupImageDropZone() {
         dropZone.classList.remove('drag-over');
     });
 
-    // Dropped File objects never carry a real filesystem path under
-    // pywebview (same browser-style sandboxing as a regular web page) -
-    // direct the user to click instead, which opens a native file dialog.
+    // Real paths arrive via desktop.py -> window.handleDroppedPaths('image', …);
+    // here we only clear the hover state.
     dropZone.addEventListener('drop', (e) => {
         e.preventDefault();
         dropZone.classList.remove('drag-over');
-        showError('Drag-and-drop is not supported here - click to browse for files instead.');
     });
 }
 
@@ -5007,7 +5136,7 @@ function openPdfModal(pdf) {
     filePathLink.dataset.filepath = pdf.filepath;
 
     const showInFinderBtn = document.getElementById('pdfShowInFinderBtn');
-    if (isDesktop && window.pywebview.api.show_item_in_folder) {
+    if (isDesktop() && window.pywebview.api.show_item_in_folder) {
         showInFinderBtn.style.display = 'inline-block';
     } else {
         showInFinderBtn.style.display = 'none';
@@ -5120,7 +5249,7 @@ async function handlePdfShowInFinder(e) {
         return;
     }
 
-    if (!isDesktop || !window.pywebview.api.show_item_in_folder) {
+    if (!isDesktop() || !window.pywebview.api.show_item_in_folder) {
         showError('This feature is only available in desktop mode');
         return;
     }
@@ -5145,7 +5274,7 @@ async function handlePdfOpen(e) {
     const filepath = btn.dataset.filepath;
     const pdfId = btn.dataset.pdfId;
 
-    if (isDesktop && window.pywebview.api.open_file) {
+    if (isDesktop() && window.pywebview.api.open_file) {
         try {
             const result = await window.pywebview.api.open_file(filepath);
             if (!result.success) {
@@ -5187,13 +5316,11 @@ function setupPdfDropZone() {
         dropZone.classList.remove('drag-over');
     });
 
-    // Dropped File objects never carry a real filesystem path under
-    // pywebview (same browser-style sandboxing as a regular web page) -
-    // direct the user to click instead, which opens a native file dialog.
+    // Real paths arrive via desktop.py -> window.handleDroppedPaths('pdf', …);
+    // here we only clear the hover state.
     dropZone.addEventListener('drop', (e) => {
         e.preventDefault();
         dropZone.classList.remove('drag-over');
-        showError('Drag-and-drop is not supported here - click to browse for files instead.');
     });
 }
 
